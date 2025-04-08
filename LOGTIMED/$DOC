@@ -1,0 +1,38 @@
+Use LOGTIMED to obtain a report about the current TSO session.
+Unlike the TSO TIME command, LOGTIMED reports session times beyond
+99 hours.
+
+logtimed
+ SMYERS HAS BEEN LOGGED ON 2 DAYS, 8 HOURS, 38 MINUTES, 28.71 SECONDS
+ (56 HOURS, 38 MINUTES)
+ SMYERS LOGGED ON AT 11:15:34 AM ON SEPTEMBER 06, 2021
+ IT IS  7:54:03 PM ON SEPTEMBER 08, 2021
+ READY
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+LOGTIMED - Source for the LOGTIMED program
+MINIFMT  - Source for the MINIFMT tool used by LOGTIMED
+PREP     - JCL to assemble and link LOGTIMED, MINIFMT and SMFETIME
+SMFETIME - Source for the SMFETIME program used by LOGTIMED
+
+The PREP JCL should run in any z/OS or recent OS/390 system.  Add
+a JOB JCL statement, and alter hlq.LOGTIMED.CBT.PDS to specify
+this data set.  It deletes and reallocates userid.LOGTIMED.LOAD.
+If you choose to link LOGTIMED into a data set with other
+programs, remove the PREP step and alter the DD statement with DD
+nane SYSLMOD in the LINK step to specify the library you wish to
+use.
+
+                     T E S T I N G   L O G T I M E D
+
+Make the userid.LOGTIMED.LOAD data set available to your TSO
+session using the TSOLIB command or any other equivalent dynamic
+STEPLIB tool, and enter the LOGTIMED command.
+
+                  I N S T A L L I N G   L O G T I M E D
+
+Copy the contents of the userid.LOGTIMED.LOAD data set to any convenient
+link list data set.  It can also be installed into LPA or MLPA.

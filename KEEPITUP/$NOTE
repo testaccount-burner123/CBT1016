@@ -1,0 +1,11 @@
+This note is from Sam Golob.   April 21, 2024
+
+I added the JCL to assemble and linkedit KEEPITUP, and I copied the
+three modules, MINIFMT, WEEKDAY, and SMFETIME after the main module
+KEEPITUP.  They now assemble in batch, using the JCL member KEEPITU$.
+
+I'm not sure that Steve Myers is still alive.  I haven't been able
+to contact him.  If anyone has definite news about him, please let
+me know.  sbgolob@cbttape.org  845-731-9031
+
+

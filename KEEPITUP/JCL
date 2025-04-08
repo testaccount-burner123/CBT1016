@@ -1,0 +1,33 @@
+//* Assemble and link KEEPITUP and its statically linked functions.
+//* Data set &SYSUID..KEEPITUP.CBT.PDS is this data set; alter the
+//*  data set name to meet your requirements.
+//* Data set &SYSUID..KEEPITUP.LOAD is the data set where the KEEPITUP
+//*  command will be installed.  To link it in a data set with other
+//*  programs, remove the PREP step, and alter the DD statement with
+//*  DD name SYSLMOD in the L step to sopecify the data set where
+//*  you want to intall KEEPITUP.
+//A       PROC M='?'
+//C       EXEC PGM=ASMA90,PARM='OBJECT,NODECK,XREF(SHORT)'
+//SYSPRINT DD  SYSOUT=*
+//SYSLIN   DD  DISP=(MOD,PASS),UNIT=SYSDA,SPACE=(CYL,(1,1,1)),
+//             DCB=(RECFM=FB,LRECL=80,BLKSIZE=3200),DSN=&&O(&M)
+//SYSLIB   DD  DISP=(SHR,PASS),DSN=SYS1.MODGEN
+//         DD  DISP=(SHR,PASS),DSN=SYS1.MACLIB
+//SYSIN    DD  DISP=(SHR,PASS),DSN=&SYSUID..KEEPITUP.CBT.PDS(&M)
+//        PEND
+//KEEPITUP EXEC A,M=KEEPITUP
+//MINIFMT EXEC A,M=MINIFMT
+//SMFETIME EXEC A,M=SMFETIME
+//WEEKDAY EXEC A,M=WEEKDAY
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..KEEPITUP.LOAD
+//L       EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//OBJ      DD  DISP=OLD,DSN=&&O
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  *
+ INCLUDE OBJ(KEEPITUP,MINIFMT,SMFETIME,WEEKDAY)
+ ENTRY  KEEPITUP
+ NAME   KEEPITUP(R)

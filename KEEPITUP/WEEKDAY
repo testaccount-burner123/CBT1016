@@ -1,0 +1,96 @@
+WEEKDAY  TITLE '                         Return Day of Week (0 through >
+               6) As A Return Code'
+***********************************************************************
+*                                                                     *
+* Title -- WEEKDAY                                                    *
+*                                                                     *
+* Function / Operation -- Return day of week as a number from 0       *
+*   (Sunday) to 6 (Saturday) as a return code                         *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L0 -- July 2011                                                 *
+*                                                                     *
+* Method of Operation -- Get current time from the hardware time      *
+*   of day clock.  Translate the value to days from Janury 1,         *
+*   1900, then use that value to determine the current day of week.   *
+*                                                                     *
+* Attributes -- WEEKDAY is reenterable, refreshable and reusable.     *
+*   It operates in TCB mode, in problem state and problem key.        *
+*   WEEKDAY uses no external operating system services.  WEEKDAY is   *
+*   declared as AMODE 31, RMODE ANY, but it will really run in any    *
+*   AMODE that is compatible with the true RMODE of the program and   *
+*   the location of the save area passed to WEEKDAY and the           *
+*   address passed in register 14.                                    *
+*                                                                     *
+* Restrictions -- WEEKDAY uses register 0 as a 64 bit register, but   *
+*   it does not save and restore the high order 32 bits of the        *
+*   register.                                                         *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+WEEKDAY  RSECT                     DEFINE PROGRAM CSECT
+WEEKDAY  RMODE ANY                 ESTABLISH PROGRAM RMODE
+WEEKDAY  AMODE 31                  ESTABLISH PROGRAM AMODE
+         PUSH  PRINT
+         PRINT NOGEN
+         CVT   DSECT=YES           DEFINE THE CVT DATA AREA
+         POP   PRINT
+         SPACE 1
+* DSECT FOR THE REGISTER SAVE AREA SUPPLIED BY THE CALLER.  THIS
+* AREA IS USED AS BOTH A REGISTER SAVE AREA AND A WORK AREA
+         SPACE 1
+SA       DSECT
+         DS    A                   RESERVER
+SAPREV   DS    A                   ADDRESS OF PREVIOUS SAVE AREA
+SANEXT   DS    A                   ADDRESS OF NEXT SAVE AREA
+SAREG14  DS    A                   CALLER'S REG 14
+SAREG15  DS    A                   CALLER'S REG 15
+SAREG0   DS    A                   CALLER'S REG 0
+SAREG1   DS    A                   CALLER'S REG 1
+SAREG2   DS    A                   CALLER'S REG 2
+SAREG3   DS    A                   CALLER'S REG 3
+SAREG4   DS    A                   CALLER'S REG 4
+SAREG5   DS    A                   CALLER'S REG 5
+SAREG6   DS    A                   CALLER'S REG 6
+SAREG7   DS    A                   CALLER'S REG 7
+SAREG8   DS    A                   CALLER'S REG 8
+SAREG9   DS    A                   CALLER'S REG 9
+SAREG10  DS    A                   CALLER'S REG 10
+CLOCK    DS    D
+WEEKDAY  RSECT                     RETURN TO PROGRAM CSECT
+         USING CVTXTNT2,2          EXTABLISH CVT EXTENSION            ->
+                                    ADDRESSABILITY
+         USING CVTMAP,3            ESTABLISH CVT ADDRESSABILITY
+         USING *,4                 ESTABLISH PROGRAM ADDRESSABILITY
+         USING SA,13               DEFINE SAVE AREA ADDRESSABILITY
+         SAVE  (14,4),,'WEEKDAY &SYSDATE &SYSTIME'  SAVE REGISTERS
+         LR    4,15                COPY ENTRY POINT ADDRESS TO REG 10
+         L     3,CVTPTR            LOAD ADDRESS OF THE CVT
+         L     2,CVTEXT2           LOAD ADDRSSS OF THE CVT EXTENSION
+         STCK  CLOCK               GET THE CURRENT TOD CLOCK
+         LG    0,CLOCK             LOAD CLOCK INTO 64-BIT REG 0
+         SLG   0,CVTLSO            SUBTRACT LEAP SECONDS
+         ALG   0,CVTLDTO           ADD TIMWZONE ADJUSTMENT
+         STG   0,CLOCK             STORE ADJUSTED TOD CLOCK
+         LM    0,1,CLOCK           LOAD THE CLOCK VALUE
+         SRDL  0,12                CONVERT CLOCK VALUE TO             ->
+                                    MICROSECONDS FROM JANUARY 1, 1900
+* This is the trickiest part: we need a value <= 2**31-1, but large
+* enough so that the quotient is <= 2**31-1
+         D     0,=A(1000000*60)    CONVERT MICROSECONDS TO MINUTES    ->
+                                    SINCE JANUARY 1, 1900
+* REGISTER 1 CONTAINS MINUTES SINCE JANUARY 1, 1900
+         SR    0,0                 SET REG 0 = 0
+         D     0,=A(24*60)         COMPUTE NUMBER OF DAYS SINCE       ->
+                                    JANUARY 1, 1900
+         AHI   1,1                 ADD FUDGE FACTOR TO REG 1
+         SR    0,0                 SET REG 0 = 0
+         D     0,=F'7'             DIVIDE DAYS SINCE JANUARY 1, 1900  ->
+                                    BY 7 TO GET THE DAY OF WEEK.
+* REGISTER 0 CONTAINS THE DAY OF WEEK
+         LR    15,0                COPY THE DAY OF WEEK TO REG 15
+         RETURN (14,4),T,RC=(15)   RESTORE REGISTERS & RETURN
+         DC    0D'0'
+         LTORG ,
+         DC    0D'0'
+         END   WEEKDAY

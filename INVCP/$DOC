@@ -1,0 +1,53 @@
+Use the INVCP TSO command procssor to run a program in the link
+list or a private library designated by "file" name USERLIB as a
+TSO command.  INVCP has no ability to run an authorized command
+as authorized.
+
+The first versions of INVCP were developed for TSO in OS/360 MVT;
+the need for something like INVCP in systems that support the
+TSOLIB command or provide for a dynamic STEPLIB through other
+means is minimal.
+
+Command syntax -
+  INVCP  program  operands for the command
+
+            C O N T E N T S   O F   T H I S   D A T A S E T
+
+Member
+$DOC   - This member.
+INVCP  - The Assembler source for INVCP.
+OBJECT - The object "deck" for the command.
+LINK   - Binder control statements used to prepare the INVCP load
+         module.
+
+     P R E P A R I N G   T H E   I N V C P   L O A D   M O D U L E
+
+The following prepares INVCP in a private data set with data set
+name userid.INVCP.LOAD using the object code in this data set.
+Alter the JCL or TSO comands as required to link it into a data
+set with other programs.  hlq.INVCP.CBT.PDS refers toi this data
+set.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..INVCP.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,LIST.RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,2)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.INVCP.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.INVCP.CBT.PDS(LINK)
+
+TSO -
+
+DEL INVCP.LOAD
+LINK ('hlq.TSO.CBT.PDS(OBJECT)' 'hlq.INVCP.CBT.PDS(LINK)') RENT REFR
+LOAD(INVCP)
+
+ I N S T A L L I N G   I N V C P   I N T O   A   Z / O S   S Y S T E M
+
+Install INVCP into any convenient link list library.  It can also
+be installed into MLPA or LPA; it is very small and resides above
+the line.

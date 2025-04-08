@@ -1,0 +1,721 @@
+RESETPDS TITLE '          RESET A PDS BY DELETING ALL THE MEMBERS AND R>
+               ESETTING THE TTR AND TRACK BALANCE'
+***********************************************************************
+*                                                                     *
+* Title -- RESETPDS                                                   *
+*                                                                     *
+* Function / Operation -- RESETPDS is a line mode TSO command to      *
+*   delete all members in a PDS or PDSE data set, and for a PDS reset *
+*   the end of data set and track balance so the next member will     *
+*   immediately follow the directory.                                 *
+*                                                                     *
+* Syntax -                                                            *
+*   RESETPDS 'dslist' SHARE/SHR                                       *
+*    'dslist' -- One or more PDS or PDSE data sets                    *
+*    SHARE -- Allocate the data sets in dslist with SHR status.       *
+*    SHR      RESETPDS will not process PDSE data sets allocated with *
+*             SHARE allocation status.                                *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L1 -- May 2018                                                  *
+*    - Data set LRECL being mysteriously altered to 256.  Rather than *
+*      use the traditional QSAM method to count directory blocks it   *
+*      has been changed to use EXCP.  QSAM may be faster than the     *
+*      very traditional channel program we use, but ...  On the other *
+*      hand we just open the data set once, which counts as a         *
+*      performance improvement.  RPDS006E message added; this message *
+*      is hsnd built rather than formatted by IKJEFF02.               *
+*    - RPDS005I message updated.                                      *
+*   V1L0 -- April 2018                                                *
+*                                                                     *
+* Attributes - RESETPDS is reenterable, refreshable and reusable.  It *
+*   operates as a TSO line mode command processor in task mode,       *
+*   enabled, problem state and problem key.  It uses no APF           *
+*   restricted operating system services.                             *
+*                                                                     *
+* Messages --                                                         *
+*   RPDS001E dddd IS NOT PARTITIONED                                  *
+*    Reason: RESETPDS determined dddd is not a partitioned data set.  *
+*    Action: RESETPDS does not attempt to process the data set.       *
+*    Programmer response: Verify that RESETPDS correctly determined   *
+*     the data set is not partitioned.                                *
+*   RPDS002I RESETTING dddd                                           *
+*    Reaaon: RESETPDS is processing data set dddd.                    *
+*    Action: RESETPDS is deleting the members in dddd.                *
+*    Programmer response: None required.                              *
+*   RPDS003E dddd IS A PDSE, BUT SHARE ACCESS WAS REQUESTED FOR THE   *
+*   DATA SET                                                          *
+*    Reason: RESETPDS determined that data set dddd is a PDSE, but    *
+*     the SHARE option was requested in the command line.  PDSE will  *
+*     not initialize a data set allocated with shared allocation      *
+*     status.                                                         *
+*    Action: RESETPDS will not process the data set.                  *
+*    Programmer response: Reenter the RESETPDS command without        *
+*     specifying the SHARE command line option.                       *
+*   RPDS004E PDSE INITIALIZATION FAILED FOR dddd, STOW RC = nn,       *
+*   REASON CODE = nn                                                  *
+*    Reason: RESETPDS determined that the attempt to initialize PDSE  *
+*     dddd failed with return code nn, reason code nn.                *
+*    Action: RESETPDS processes the next data set in dslist.          *
+*    Programmer response: Consult the return code table in the STOW   *
+*     completion codes topic in DFSMS Macro Instructions for Data Sets*
+*     for your z/OS release.  If possible, correct the problem        *
+*     described in the table and rerun the RESETPDS command.          *
+*   RPDS005I RESETPDS V1L1 05/12/18 03.47                             *
+*    Reason: The VERSION keyword was specified in the command line.   *
+*    Action: RESETPDS issues this message.                            *
+*    Ptogrammer response: None required.                              *
+*   RPDS006E I/O ERROR ...                                            *
+*    Reason: An error was detected while counting the directory       *
+*     blocks.  The remainder of the message is the "standard"         *
+*     message prepared by the SYNAD macro.                            *
+*    Action: RESETPDS terminates processing for the data set.         *
+*    Programmer response: The data set is corrupted in some fashion.  *
+*     The message may provide some clue as to the nature of the       *
+*     corruption and what can be done to resolve the corruption.      *
+*                                                                     *
+***********************************************************************
+         EJECT
+         MACRO
+&NAME    LINKFF02 &MF=
+         LCLC  &LK1,&LK2
+&LK1     SETC  'LKP&SYSNDX.A'
+&LK2     SETC  'LKP&SYSNDX.B'
+&NAME    L     15,CVTPTR
+         ICM   15,B'1111',CVTEFF02-CVTMAP(15)
+         BNZ   &LK1
+         LINK  SF=(E,LINKFF02),MF=&MF
+         B     &LK2
+*        CALL  (15)
+&LK1     CALL  (15),MF=&MF
+&LK2     DC    0H'0'
+         MEND
+         SPACE 5
+         MACRO
+&NAME    LINKPARS &MF=
+         LCLC  &LK1,&LK2
+&LK1     SETC  'LKP&SYSNDX.A'
+&LK2     SETC  'LKP&SYSNDX.B'
+&NAME    L     15,CVTPTR
+         ICM   15,B'1111',CVTPARS-CVTMAP(15)
+         BNZ   &LK1
+         LINK  SF=(E,LINKPARS),MF=&MF
+         B     &LK2
+*        CALL  (15)
+&LK1     CALL  (15),MF=&MF
+&LK2     DC    0H'0'
+         MEND
+         EJECT
+RESETPDS CSECT                     DEFINE PROGRAM CSECT
+RESETPDS AMODE 31
+RESETPDS RMODE ANY
+         USING RPDL,10             ESTABLISH PDL DSECT
+         USING PPL,11              ESTABLISK PPL / WORK AREA ADDRESSING
+         USING *,12                ESTABLISH PROGRAM ADDRESSABILITY
+         SAVE  (14,12),,'RESETPDS &SYSDATE &SYSTIME'  SAVE REGISTERS
+         LR    12,15               PREPARE PROGRAM BASE REGISTER
+         LR    2,1                 COPY CPPL ADDRESS TO REG 2
+         LM    6,9,0(1)            LOAD THE CPPL INTO REGS 6 TO 9
+         LA    5,WASIZE            ALLOCATE THE PPL & WORK AREA
+         GETMAIN R,LV=(5)
+         LR    4,1
+         LR    11,1
+         SR    15,15               CLEAR THE PPL AND
+         MVCL  4,14                 WORK AREA
+         LA    15,SAVEAREA         PREPARE A NEW SAVE AREA AND
+         ST    13,4(,15)            ADD IT TO THE SAVE AREA CHAIN
+         ST    15,8(,13)
+         LR    13,15
+         ST    RUPT,(IOPLUPT-IOPL)+MYIOPL  PREPARE
+         ST    RECT,(IOPLECT-IOPL)+MYIOPL   THE IOPL,
+         ST    RCBUF,PPLCBUF                 PPL AND
+         ST    RUPT,PPLUPT                    THE DAIRFAIL AND
+         ST    RECT,PPLECT                     IKJEFF02 PARM LISTS
+         L     0,=A(RPCL)
+         ST    0,PPLPCL
+         LA    0,ECB
+         ST    0,(IOPLECB-IOPL)+MYIOPL
+         ST    0,PPLECB
+         LA    0,PDLADDR
+         ST    0,PPLANS
+         ST    2,DFCPPLP
+         LA    0,DYNRC
+         ST    0,DFRCP
+         L     0,=A(0)
+         ST    0,DFJEFF02
+         LA    0,=AL1(0,DFSVC99)
+         ST    0,DFIDP
+         ST    2,MTCPPLP
+         LA    0,MTCSECTP
+         ST    0,MTPLPTR
+         L     0,=A(RMSGS)
+         ST    0,MTCSECTP
+         MVI   MTSW1,MTPUTLSW
+         MVI   MTSW2,MTFMT
+         LINKPARS MF=(E,(11))      USE IKJPARS TO EXTRACT THE DATA    ->
+                                    SET NAMES FROM THE COMMAND LINE
+         LTR   15,15               OK?
+         BNZ   EXIT12              SOMETHING WENT WRONG IN IKJPARS
+         L     10,PDLADDR          LOAD ADDRESS OF THE PDL
+         ICM   0,B'0011',RVER      LOAD THE KEYWORD INDEXFOR VERSION
+         BZ    SKIPVER             BR IF VERSION NOT SPECIFIED
+         L     0,=C'MSG5'          CALL IKJEFF02 TO LIST THE COMMAND  ->
+                                    VERSION
+         BAS   14,IKJEFF02
+SKIPVER  LA    9,RDSN              COMPUTE ADDRESS OF THE FIRST DATA  ->
+                                    SET PDE
+NEXTDSN  MVC   DYNPARM(AL),A       INIT THE DYNALLOC SKELETON
+         MVC   EXCPDCB,MASTEDCB
+         MVC   OPARM,MASTOPEN
+         L     0,0(,9)             LOAD ADDRESS OF THE DATA SET NAMW
+         LH    1,4(,9)             LOAD THE LENGTH
+         LA    14,(ADSN-A)+DYNPARM COPY THE DATA SET NAME
+         LA    15,L'ADSN            TO THE DYNALLOC SKELETON
+         ICM   1,B'1000',=C' '
+         MVCL  14,0
+         LH    0,4(,9)             PREPARE MTINSRTS FOR IKJEFF02
+         L     1,0(,9)
+         STM   0,1,MTINSRTS
+         LH    0,RSHARE            SHR SPECIFIED IN THE CMD LINE?
+         LTR   0,0
+         BZ    *+L'*+4             NO
+         MVI   ((ATXT05-A)+DYNPARM)+6,X'08'
+         LA    1,DYNPARM           ALLOCATE THE DATA SET
+         BAS   14,DYNALLOC
+         LTR   15,15               OK?
+         BNZ   SKIPDSN             NO
+         MVC   (DCBDDNAM-IHADCB)+EXCPDCB,(ADDN-A)+DYNPARM
+         NC    (ADSORG-A)+DYNPARM,=AL1(255-DCBDSGU,255)  DSORG = PO?
+         CLC   (ADSORG-A)+DYNPARM,=AL1(DCBDSGPO,0)
+         BE    ITSAPDS                                   YES
+         L     0,=C'MSG1'          WRITE A MESSAGE
+         BAS   14,IKJEFF02
+         B     FREEDSN             AND FREE THE DATA SET
+ITSAPDS  MVC   CAMLST,MASTCAM      PREPARE
+         LA    0,(ADSN-A)+DYNPARM   TO
+         ST    0,CAMLST+4            READ
+         LA    0,(AVOL-A)+DYNPARM     THE FORMAT 1
+         ST    0,CAMLST+8              DSCB
+         LA    0,DSCBAREA               FOR THE
+         ST    0,CAMLST+12               DATA SET
+         OBTAIN CAMLST
+         LTR   15,15               OK?
+         BZ    *+L'*+2             YES
+         DC    H'0'                OOPS
+         TM    (DS1SMSFG-DS1FMTID)+DSCBAREA,DS1PDSE  DATA SET A PDSE?
+         BZ    NOTPDSE                               NO
+         LH    0,RSHARE            DATA SET ALLOCATED SHR?
+         LTR   0,0
+         BZ    OPENPDSE
+         L     0,=C'MSGX'          YES, ISSUE A MESSAGE
+         BAS   14,IKJEFF02
+         B     FREEDSN
+OPENPDSE L     0,=C'MSG2'
+         BAS   14,IKJEFF02
+         MVC   OPARM,MASTOPEN
+         MVC   PODCB,MASTPDCB
+         MVC   (DCBDDNAM-IHADCB)+PODCB,(ADDN-A)+DYNPARM
+         OPEN  (PODCB,OUTPUT),MF=(E,OPARM)
+         STOW  PODCB,,I
+         LTR   15,15
+         BZ    CLOSEPDS
+         STM   15,0,STOWR15
+         LA    14,L'STOWR15
+         LA    15,STOWR15
+         L     0,=A(X'80000000')
+         OR    14,0
+         STM   14,15,MTINSRTS+8
+         LA    15,STOWR0
+         STM   14,15,MTINSRTS+16
+         L     0,=C'MSG4'
+         BAS   14,IKJEFF02
+CLOSEPDS MVC   OPARM,MASTOPEN
+         CLOSE PODCB,MF=(E,OPARM)
+         B     FREEDSN
+NOTPDSE  L     0,=C'MSG2'
+         BAS   14,IKJEFF02
+         MVC   OPARM,MASTOPEN
+         OPEN  (EXCPDCB,OUTPUT),MF=(E,OPARM)
+         LA    0,X'100'            SET TTRN = 000100
+         L     1,(DCBDEBAD-IHADCB)+EXCPDCB  LOAD ADDRESS OF THE DEB
+         N     1,=A(X'FFFFFF')     ISOLATE THE 24-BIT DEB ADDRESS
+         LA    2,IOBSEEK
+         L     15,CVTPTR               CONVERT
+         L     15,CVTPCNVT-CVTMAP(,15)  TTRN = 000100
+         STM   8,13,12(13)               TO
+         LR    8,13                       MBBCCHHR
+         CALL  (15)
+         LM    8,13,12(8)
+         XC    DIRCCWS(CP2SIZE),DIRCCWS  PREPARE
+         LA    0,IOBSEEK+3                THE
+         ST    0,DIRCCWS                   CCW
+         LA    0,DIRCCWS                    CHAIN
+         ST    0,DIRCCWS+8                   TO
+         LA    0,DIRBLOCK                     READ
+         ST    0,DIRCCWS+16                    THE
+         LA    0,COUNT                          DIRECTORY
+         ST    0,DIRCCWS+24
+         OC    DIRCCWS(CP2SIZE),CP2
+         XC    IOB(32),IOB         PREPARE
+         MVI   IOB,X'42'            THE
+         LA    0,ECB                 IOB
+         ST    0,IOB+4
+         LA    0,EXCPDCB
+         ST    0,IOBDCBPT
+         LA    0,DIRCCWS
+         ST    0,IOBSTART
+         SR    2,2                 SET DIRECTORY BLOCKS = 0
+         LA    3,1
+COUNTDIR MVI   ECB,0               READ A DIRECTORY BLOCK
+         EXCP  IOB
+         WAIT  1,ECB=ECB
+         CLI   ECB,X'7F'
+         BNE   CHKEOF
+         AR    2,3                 UPDATE DIRECTORY BLOCK COUNT
+         OC    COUNT+6(2),COUNT+6  NEXT RECORD AN EOF?
+         BZ    DIREOF              YES
+         MVC   IOBSEEK+3(5),COUNT  GO READ THE NEXT DIRECTORY BLOCK
+         B     COUNTDIR
+CHKEOF   DC    0H'0'
+         SYNADAF ACSMETH=EXCP,PARM1=IOB  GENERATE THE "STANDARD" I/O  ->
+                                          ERROR MESSAGE
+* THE MESSAGE AREA CONSTRUCTED BY SYNADAF IS BUILT AS A VARIABLE DATA
+* BLOCK; A BDW FOLLOWED BY THE RDW FOR THE PROTOTYPE MESSAGE.
+         LA    0,4(,1)             COPY THE
+         LH    1,4(,1)              SYNADAF
+         LR    15,1                  MESSAGE
+         LA    14,DYNPARM             TO
+         MVCL  14,0                    DYNPARM
+         SYNADRLS ,                RELEASE THE MESSAGE AREA
+         MVC   DYNPARM+4(20),=CL20'RPDS006E I/O ERROR'
+         SR    15,15               PREPARE A
+         LA    0,1                  PUTLINE
+         LA    1,DYNPARM             OUTPUT LINE
+         STM   15,1,DYNPARM+128       DESCRIPTOR
+         MVI   ECB,0
+         PUTLINE OUTPUT=(DYNPARM+128,TERM,MULTLVL,INFOR),             ->
+               MF=(E,MYIOPL),PARM=PUTLPB
+         B     CLOSEDSN
+* DETERMINE THE NUMBER OF PDS DIRECTORY BLOCKS PER TRACK
+DIREOF   L     7,=AL1(1,8,1,0)
+         XC    CALCPARM,CALCPARM
+         L     0,=A(X'FFFFFF')
+         L     4,(DCBDEBAD-IHADCB)+EXCPDCB
+         NR    4,0
+         L     4,(DEBUCBAD-DEBDASD)+(DEBBASND-DEBBASIC)(,4)
+         NR    4,0
+         TRKCALC MF=(E,CALCPARM),FUNCTN=TRKCAP,RKDD=(7),UCB=(4),      ->
+               REGSAVE=YES
+         LR    3,0
+         ST    0,TRKCAP
+         SR    0,0                 CALCULATE
+         LR    1,2                  TRACKS IN THE
+         DR    0,3                   DIRECTORY
+         LR    5,1                 COPY TT OF LAST BLOCK TO REG 5
+         LTR   6,0                 COPY R OF LAST BLOCK TO REG 6
+         BNZ   CHKTRK
+         LR    6,3                 COPY DIRECTORY RECS / TRK TO REG 6
+         BCTR  5,0                 REDUCE TTR OF THE LAST TRACK BY 1
+* REG 5 = TT OF LAST TRACK IN THE DIRECTORY
+* REG 6 = NUMBER OF DIRECTORY BLOCKS IN LAST TRACK IN THE DIRECTORY
+* OBTAIN THE INITIAL TRACK BALANCE
+CHKTRK   XC    CALCPARM,CALCPARM
+*        L     7,=AL1(1,8,1,0)
+         TRKCALC FUNCTN=TRKBAL,REMOVE=YES,REGSAVE=YES,    GET THE     ->
+               UCB=(4),RKDD==AL1(1,8,1,0),MF=(E,CALCPARM)  INITIAL    ->
+                                                          TRACK BALANCE
+         ST    0,INITBAL
+         LR    3,0
+         LR    8,0
+         LR    10,6
+         N     7,=A(X'FFFFFF')     SET THE R IN RKDD = 0
+*        L     15,CVTPTR                LOAD ADDRESS OF THE CVT
+*        L     15,CVTZDTAB-CVTMAP(,15)  LOAD ADDRESS OF THE DEVICE    ->
+                                         CHARACTERISTICS TABLE
+*        SR    14,14                    LOAD DEVICE TYPE FROM THE UCB
+*        IC    14,UCBTBYT4-UCBOB(,4)
+*        IC    14,0(14,15)              LOAD OFFSET OF THE DEVICE     ->
+                                         CHARACTERISTICS FOR THE DEVICE
+*        AR    15,14                    COMPUTE ADDRESS OF THE DEVICE ->
+                                         CHARACTERISTICS
+*        ICM   14,B'0011',DVCTRKLN-DVCT(15)  LOAD THE TRACK CAPACITY
+*        NOPR  0                   STOP HERE TO COMPARE REGS 14 & 3
+*        L     3,=F'-1'            TRY TO GET THE RIGHT ANSWER
+* NOW DETERMINE THE LAST TRACK BALANCE AFTER WRITING THE DIRECTORY
+* BLOCKS
+GETBAL   AL    7,=A(X'1000000')    ADD 1 TO THE R IN RKDD
+         TRKCALC FUNCTN=TRKBAL,REMOVE=NO,REGSAVE=YES,RKDD=(7),UCB=(4), >
+               BALANCE=(3),MF=(E,CALCPARM)
+         LR    3,0
+         BCT   10,GETBAL
+* DELETE ALL THE MEMBERS BY REPLACING THE FIRST DIRECTORY BLOCK WITH AN
+* EMPTY DIRECTORY BLOCK.
+         LA    0,X'100'
+         L     1,(DCBDEBAD-IHADCB)+EXCPDCB
+         N     1,=A(X'FFFFFF')
+         LA    2,IOBSEEK
+         L     15,CVTPTR
+         L     15,CVTPCNVT-CVTMAP(,15)
+         STM   8,13,12(13)
+         LR    8,13
+         BALR  14,15
+         LM    8,13,12(8)
+         XC    CCWS(CP1SIZE),CCWS  PREPARE
+         LA    0,IOBSEEK+3          THE
+         ST    0,CCWS                ADDRESSES
+         LA    0,CCWS                 IN THE
+         ST    0,CCWS+8                CCW
+         LA    0,DIRBLOCK               CHAIN
+         ST    0,UPDATE
+         XC    DIRBLOCK+8(L'DIRBLOCK-8),DIRBLOCK+8  INITIALIZE
+         MVC   DIRBLOCK(8),=FL8'-1'                  AN EMPTY
+         MVC   DIRBLOCK+8(2),=AL2(14)                 DIRECTORY
+         MVC   DIRBLOCK+8+2(8),DIRBLOCK                BLOCK
+         OC    CCWS(CP1SIZE),CP1   ADD THE FIXED PART OF THE CCW CHAIN
+         XC    IOB(32),IOB         BUILD THE IOB
+         MVI   IOB,X'42'            (IOBSEEK ALREADY BUILT)
+         LA    0,ECB
+         ST    0,IOBECBPT
+         LA    0,CCWS
+         ST    0,IOBSTART
+         LA    0,EXCPDCB
+         ST    0,IOBDCBPT
+         MVI   ECB,0
+         EXCP  IOB
+         WAIT  1,ECB=ECB
+         CLI   ECB,X'7F'           I/O COMPLETE OK?
+         BE    *+L'*+2             YES
+         DC    H'0'                OOPS
+* DETERMINE IF AN EOF WILL FIT ON THIS TRACK
+         LA    6,1(,6)             COMPUTE R FOR THE EOF
+         LR    0,6
+         SLL   0,24
+         LA    7,1
+         OR    7,0
+         XC    CALCPARM,CALCPARM
+         TRKCALC FUNCTN=TRKBAL,REMOVE=NO,REGSAVE=YES,RKDD=(7),UCB=(4), >
+               BALANCE=(3),MF=(E,CALCPARM)
+         LTR   15,15
+         BZ    GOTBAL
+* THE EOF WILL NOT FIT ON THIS TRACK, COMPUTE THE TRACK BALANCE
+* AFTER ADDING AN EOF AS RECORD 1
+         N     7,=A(X'00FFFFFF')
+         O     7,=A(X'01000000')
+         LA    6,1
+         LA    5,1(,5)
+         L     3,INITBAL
+         TRKCALC FUNCTN=TRKBAL,REMOVE=NO,REGSAVE=YES,RKDD=(7),UCB=(4), >
+               BALANCE=(3),MF=(E,CALCPARM)
+         NOPR  0
+GOTBAL   STCM  0,B'0011',(DCBTRBAL-IHADCB)+EXCPDCB  STORE THE TRACK   ->
+                                                     BALANCE
+         LR    0,6                 COPY R TO REG 0
+         SLL   0,8
+         SLL   5,16                SET REG 5 = TT00
+         OR    0,5                 BUILD TTR0 IN REG 0
+         LA    2,(DCBFDAD-IHADCB)+EXCPDCB  CONVERT TTR0 TO MBBCCHHR
+         L     1,(DCBDEBAD-IHADCB)+EXCPDCB  IN DCBFDAD
+         N     1,=A(X'FFFFFF')
+         L     15,CVTPTR
+         L     15,CVTPCNVT-CVTMAP(,15)
+         STM   8,13,12(13)
+         LR    8,13
+         BASR  14,15
+         LM    8,13,12(8)
+         LTR   15,15               CONVERSION OK?
+         BZ    *+L'*+2             YES
+         DC    H'0'                OOPS
+CLOSEDSN DC    0H'0'
+         MVC   OPARM,MASTOPEN
+         CLOSE EXCPDCB,MF=(E,OPARM)
+FREEDSN  MVC   DYNPARM(UL),U
+         MVC   (UDDN-U)+DYNPARM,(DCBDDNAM-IHADCB)+EXCPDCB
+         LA    1,DYNPARM
+         BAS   14,DYNALLOC
+SKIPDSN  CLI   3*8(9),X'FF'
+         BE    FREEPDL
+         L     9,3*8(,9)
+         N     9,=A(X'FFFFFF')
+         BNZ   NEXTDSN
+FREEPDL  IKJRLSA PDLADDR
+         B     EXIT
+EXIT12   MVI   ECB,0
+         STACK MF=(E,MYIOPL),PARM=STACKPB,DELETE=PROC,ENTRY=CALLSTCK
+CALLSTCK LINK  SF=(E,LINKSTCK),MF=(E,(1))
+         TCLEARQ INPUT
+         LA    10,12
+EXIT     LR    10,15
+         L     13,4(,13)
+         LA    0,WASIZE
+         FREEMAIN R,LV=(0),A=(11)
+         LR    15,10
+         RETURN (14,12),RC=(15)
+         EJECT
+         CNOP  0,8
+IKJEFF02 BASR  15,0
+         SAVE  (14,1),,IKJEFF02
+         LA    15,72(,13)
+         ST    13,4(,15)
+         ST    15,8(,13)
+         LR    13,15
+         STCM  0,B'1111',MTMSGID
+         LINKFF02 MF=(E,MTPARML)
+         L     13,4(,13)
+         RETURN (14,1),RC=(15)
+         EJECT
+         CNOP  0,8
+DYNALLOC BASR  15,0
+         SAVE  (14,12),,DYNALLOC
+         LA    15,72(,13)
+         ST    13,4(,15)
+         ST    15,8(,13)
+         LR    13,15
+         BAL   14,DYNRELOC
+         l     2,0(,1)
+         DYNALLOC ,
+         LTR   3,15
+         BZ    DYNA0100
+         ST    2,DFS99RBP
+         ST    3,DYNRC
+         LINK  SF=(E,LINKDF),MF=(E,DFPARMS)
+         LR    15,3
+DYNA0100 L     13,4(,13)
+         RETURN (14,12),RC=(15)
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- Translate address offsets in a coded        *
+*   dynamic allocation parameter list to true addresses               *
+*                                                                     *
+* Status / Change Level --                                            *
+*           March 2012                                                *
+*    - Change comment.  The IEFZB4D2 macro name in a comment was      *
+*      incorrectly specified as IEFAB4D2.  The change level was not   *
+*      altered since the only change was in a comment and in this     *
+*      change log.                                                    *
+*    - Added comment about attributes.                                *
+*   V3L0 -- April 2010                                                *
+*                                                                     *
+* Example Calling Sequence --                                         *
+*   ----+----1----+----2----+----3----+----4----+----5----+----6      *
+*            LA    1,DYNPARMS                                         *
+*            BRAS  14,DYNRELOC                                        *
+*            ...                                                      *
+*   DYNPARMS DC    A(X'80000000'+(RB-DYNPARMS))                       *
+*   RB       DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0),2AL2(0)           *
+*            DC    A(TUP001-DYNPARMS)                                 *
+*            DC    2A(0)                                              *
+*   TUP001   DC    A(TU001-DYNPARMS)                                  *
+*            DC    A(TU002-DYNPARMS)                                  *
+*            DC    A(TU003-DYNPARMS)                                  *
+*            DC    A(X'800000000'+(TU004-DYNPARMS))                   *
+*   TU001    DC    AL2(DALDSNAM,1,L'DSN)                              *
+*   DSN      DC    C'SYS1.MACLIB'                                     *
+*   TU002    DC    AL2(DALSTATS,1,1),AL1(8)                           *
+*   TU003    DC    AL2(DALRTORG,1,2),AL2(0)                           *
+*   TU004    DC    AL2(DALRTDDN,1,8),CL8' '                           *
+*                                                                     *
+* Attributes -- DYNRELOC is reenterable, refreshable and reusable.    *
+*   It operates in TCB mode, in problem key and problem state.  It    *
+*   operates in AMODE 24 or 31 that is consistent with the location   *
+*   of the code, the register save area, and the dynamic allocation   *
+*   parameter list.  It uses no external operating system resources.  *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+         PUSH  USING
+*        DROP  ,                   KILL ANY CURRENT USING
+DYNRELOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+*        USING *,12                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,DYNRELOC   SAVE REGISTERS
+*        LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY ADDRESS OF THE RB POINTER TO  ->
+                                    REG 2
+         L     3,0(,1)             LOAD OFFSET OF THE REQUEST BLOCK
+         ALR   3,2                 COMPUTE THE REQUEST BLOCK ADDRESS
+         ST    3,0(,1)             STORE THE REQUEST BLOCK ADDRESS
+         USING S99RB,3             ESTABLISH S99RB ADDRESSABILITY
+         L     4,S99TXTPP          LOAD OFFSET OF THE FIRST TEXT      ->
+                                    UNIT POINTER
+         ALR   4,2                 COMPUTE ADDRESS OF THE TEXT UNIT   ->
+                                    POINTER
+         ST    4,S99TXTPP          STORE ITS ADDRESS IN THE S99RB
+DYNR0100 L     15,0(,4)            LOAD OFFSET OF A TEXT UNIT POINTER
+         LR    14,15               COPY OFFSET TO REG 14
+         N     14,DYNR0300         REMOVE THE VL BIT
+         JZ    DYNR0200            BR IF NO POINTER IN THE POSITION
+         ALR   15,2                COMPUTE ADDRESS OF THE TEXT UNIT
+         ST    15,0(,4)            STORE TEXT UNIT ADDRESS IN THE     ->
+                                    TEXT UNIT POINTER
+DYNR0200 TM    0(4),X'80'          TEST IF LAST TEXT UNIT POINTER
+         LA    4,4(,4)             COMPUTE ADDRESS OF THE NEXT TEXT   ->
+                                    UNIT POINTER
+         JZ    DYNR0100            BR IF NOT THE LAST TEXT UNIT POINTER
+         RETURN (14,12),T          RESTORE REGISTERS & RETURN TO CALLER
+DYNR0300 DC    A(X'7FFFFFFF')      MASK TO REMOVE THE VL BIT
+         SPACE 1
+MASTCAM  CAMLST SEARCH,*-*,*-*,*-*
+         DC    0D'0'
+CP1      CCW   X'31',*-*,X'40',5   SEARCH ID EQUAL
+         CCW   X'08',*-*,0,0        TIC IF ID DOES NOT MATCH
+         CCW   X'0D',*-*,0,256+8     WRITE KEY AND DATA
+CP1SIZE  EQU   *-CP1
+CP2      CCW   X'31',*-*,X'40',5          SEARCH ID EQUAL
+         CCW   X'08',*-*,0,0              TRANSFER IN CHANNEL
+         CCW   X'0E',*-*,X'40',L'DIRBLOCK READ KEY AND DATA
+         CCW   X'80'+X'12',*-*,0,L'COUNT  READ COUNT
+CP2SIZE  EQU   *-CP2
+         LTORG ,
+         POP   USING               RESTORE PREVIOUS USING
+*        IEFZB4D0 ,
+*        IEFZB4D2 ,
+LINKFF02 LINK  SF=L,EP=IKJEFF02
+LINKSTCK LINK  SF=L,EP=IKJSTCK
+LINKPARS LINK  SF=L,EP=IKJPARS
+LINKDF   LINK  SF=L,EP=IKJEFF18
+         PUSH  PRINT
+         PRINT NOGEN
+MASTEDCB DCB   DSORG=PO,MACRF=E,DDNAME=FILLMEIN
+MASTPDCB DCB   DSORG=PO,MACRF=(R,W),DDNAME=FILLMEIN
+MASTOPEN OPEN  *-*,MF=L
+         POP   PRINT
+         SPACE 1
+A        DC    A(X'80000000'+(ARB-A))
+ARB      DC    AL1(S99RBEND-S99RB,S99VRBAL,S99NOCNV+S99NOMNT+S99NOMIG,0>
+               )
+         DC    2AL2(0),A(ATXTPP-A,0,0)
+ATXTPP   DC    A(ATXT01-A,ATXT02-A,ATXT03-A,ATXT04-A)
+         DC    A(X'80000000'+(ATXT05-A))
+ATXT01   DC    AL2(DALRTDDN,1,L'ADDN)
+ADDN     DC    CL8' '
+ATXT02   DC    AL2(DALDSNAM,1,L'ADSN)
+ADSN     DC    CL44' '
+ATXT03   DC    AL2(DALRTORG,1,L'ADSORG)
+ADSORG   DC    AL2(0)
+ATXT04   DC    AL2(DALRTVOL,1,L'AVOL)
+AVOL     DC    CL6' '
+ATXT05   DC    AL2(DALSTATS,1,1),AL1(X'01')  X'08' = SHR
+AL       EQU   *-A
+         SPACE 1
+U        DC    A(X'80000000'+(URB-U))
+URB      DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0)
+         DC    2AL2(0),A(UTXTPP-U,0,0)
+UTXTPP   DC    A(X'80000000'+(UTXT01-U))
+UTXT01   DC    AL2(DUNDDNAM,1,L'UDDN)
+UDDN     DC    CL8' '
+UL       EQU   *-U
+         DC    0D'0'
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+RPCL     IKJPARM DSECT=RPDL
+RPCL     RMODE ANY
+RDSN     IKJPOSIT DSNAME,LIST,USID,                                   ->
+               PROMPT='NAME OF PDS OR PDSE TO RESET'
+RSHARE   IKJKEYWD
+         IKJNAME SHARE,ALIAS='SHR'
+RVER     IKJKEYWD
+         IKJNAME VERSION
+         IKJENDP
+         SPACE 2
+         DCBD  DSORG=(PS,PO),DEVD=DA
+         SPACE 2
+         IEZDEB ,
+         SPACE 2
+         IEFZB4D0 ,
+         IEFZB4D2 ,
+         SPACE 2
+         CVT   DSECT=YES
+         SPACE 2
+*        IHADVCT ,
+         SPACE 2
+         IEFUCBOB ,
+         SPACE 2
+DSCB     DSECT
+         IECSDSL1 1
+         SPACE 2
+         IKJCPPL
+RCBUF    EQU   6+(CPPLCBUF-CPPL)/4
+RUPT     EQU   6+(CPPLUPT-CPPL)/4
+RECT     EQU   6+(CPPLECT-CPPL)/4
+         SPACE 2
+         IKJIOPL
+IOPLSIZE EQU   *-IOPL
+         EJECT
+         IKJPPL ,                  DEFINE THE PPL AND WORK AREA
+         IKJEFFDF DFDSEC2=YES      DAIRFAIL (IKJEFF18) PARAMETER LIST
+PPL      DSECT                     RETURN TO THE PPL
+         IKJEFFMT MTFORMAT=NEW,MTDSECT=NO  IKJEFF02 PARAMETER LIST &  ->
+                                            DATA AREA
+SAVEAREA DS    (5*9)D              5 72 BYTE REGISTER SAVE AREAS
+MYIOPL   DS    XL(IOPLSIZE),0D     TSO IOPL FOR IKJSTCK
+DYNPARM  DS    XL256               DYNALLOC PARAMDETER LIST BUILD AREA
+STACKPB  STACK MF=L                IKJSTCK PARAMETER AREA
+PUTLPB   PUTLINE MF=L
+PODCBS   DCB   DSORG=PO,MACRF=(R,W),DDNAME=FILLMEIN
+PODCB    EQU   PODCBS,*-PODCBS
+         ORG   ,
+EXCPDCBS DCB   DSORG=PO,MACRF=E,DDNAME=FILLMEIN
+EXCPDCB  EQU   EXCPDCBS,*-EXCPDCBS
+OPARMS   OPEN  *-*,MF=L
+OPARM    EQU   OPARMS,*-OPARMS
+CALCPRMS TRKCALC MF=L
+CALCPARM EQU   CALCPRMS,*-CALCPRMS
+STOWR15  DS    F
+STOWR0   DS    F
+ECB      DS    F
+PDLADDR  DS    A
+TRKCAP   DS    F                   NUMBER OF PDS DIRECTORY RECORDS/TRK
+INITBAL  DS    F                   TRACK BALANCE AFTER "REMOVING" R1
+DYNRC    DS    F
+CAMLSTS  CAMLST  SEARCH,*-*,*-*,*-*
+CAMLST   EQU   CAMLSTS,*-CAMLSTS
+         DS    0D
+DSCBAREA DS    0XL140
+IOB      DS    0XL40
+BASEIOB  DS    0XL32
+IOBFLAGS DS    4AL1
+IOBECBPT DS    F
+IOBCSW   DS    XL8
+IOBSTART DS    A
+IOBDCBPT DS    A
+         DS    2A
+IOBSEEK  DS    XL8
+CCWS     CCW   X'31',IOBSEEK+3,X'40',5
+         CCW   X'08',CCWS,0,0
+UPDATE   CCW   X'0D',DIRBLOCK,0,256+8
+         ORG   CCWS
+DIRCCWS  CCW   X'31',IOBSEEK+3,X'40',5
+         CCW   X'08',DIRCCWS,0,0
+         CCW   X'0E',DIRBLOCK,X'40',L'DIRBLOCK
+         CCW   X'80'+X'12',COUNT,0,L'COUNT
+         ORG   ,
+DIRBLOCK DS    XL(256+8)
+COUNT    DS    XL8
+         POP   PRINT
+         DS    0D
+WASIZE   EQU   *-PPL
+         SPACE 5
+RMSGS    RSECT
+RMSGS    RMODE ANY
+         IKJTSMSG ('RPDS001E ',,' IS NOT PARTITIONED'),MSG1
+         IKJTSMSG ('RPDS002I RESETTING ',),MSG2
+         IKJTSMSG ('RPDS003E YOUR TSO SESSION MUST HAVE EXCLUSIVE ACCES>
+               S TO A PDSE DATA SET TO RESET THE DATA SET'),MSGX,MSG3
+         IKJTSMSG ('RPDS003E ',,' IS A PDSE, BUT SHARE ACCESS WAS REQUE>
+               STED FOR THE DATA SET+'),MSG3
+         IKJTSMSG ('RPDS004E PDSE INITIALIZATION FAILED FOR ',,', STOW >
+               RC = ',,', REASON CODE = ',),MSG4
+         IKJTSMSG ('RPDS005I RESETPDS V1L1 &SYSDATE &SYSTIME'),MSG5
+         IKJTSMSG
+         DC    0D'0'
+         END   RESETPDS
+* THE ASSEMBLER WILL "PUNCH" THESE STATEMENTS WHEN USING THE BATCH
+* ASSEMBLER OPTION
+         PUNCH ' ENTRY RESETPDS'
+         PUNCH ' ALIAS RPDS,RESETPDS'
+         PUNCH ' NAME RPDS11(R)'
+         END

@@ -1,0 +1,1144 @@
+TSOLPDIR TITLE '                T S O   C O M M A N D   T O   L I S T  >
+                A   P D S   D I R E C T O R Y'
+***********************************************************************
+*                                                                     *
+* Title -- TSOLPDIR                                                   *
+*                                                                     *
+* Copyright (c) 2013, 2021 J. Stephen Myers                           *
+*                                                                     *
+* Function / Operation -- TSOLPDIR is a line mode TSO command to      *
+*   display the contents of a PDS directory at the TSO terminal.      *
+*   When a "dump" of directory data is requested, the output is       *
+*   similiar to the data displayed by the IEHLIST LISTPDS command,    *
+*   though somwhat compacted with a line width limited to 78 bytes.   *
+*   A sample listing is                                               *
+*                                                                     *
+*   ZZZZZZ.TSOLPDIR.LOAD ON VVVVVV                                    *
+*   -MEMBER- --TTRC-- --USER DATA (TTRC AND USER DATA ARE HEX)        *
+*   TEMPNAME 00000C2C 0000360000 00000012E6 0007900790 0000008802     *
+*                     01010000                                        *
+*   TSOLPDIR 0000042C 0000090000 000000C2E3 0007900790 0000008802     *
+*                     01010000                                        *
+*   2 ALLOCATED DIRECTORY BLOCKS, 1 USED DIRECTORY BLOCKS             *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L7 -- June 2021                                                 *
+*    * Support 8 character userids in ISPF directory data             *
+*    * Correct problem with record counts                             *
+*    * Update copyright declarations                                  *
+*   V1L6 -- September 2013                                            *
+*    * Use SYSSTATE macro to define system architecture level.  This  *
+*      has no direct effect on the program, but some IBM macros       *
+*      expand to use relative branch instructions.                    *
+*    * Minor updaes applied to the ISPF header.                       *
+*   V1L5 -- August 2013                                               *
+*    * VERSION keyword added.  When VERSION is in the command line,   *
+*      message LPDIR005I is issued.                                   *
+*    * Partial support for ISPF extended attributes.                  *
+*      - PDS user data definition updated                             *
+*      - Output text area provided with extra bytes for larger        *
+*        record counts.  Up to 9999999 records can be formatted.      *
+*      - Header updated.                                              *
+*      - Support not fully tested.  No data sets with extended        *
+*        attributes available to author.                              *
+*    * The IKJEFF02 and IKJPARS addresses in the CVT are used, if     *
+*      present.  If IKJEFF02 is loaded, it is not deleted.            *
+*   V1L4 -- August 2013                                               *
+*    * Added ENTRY statement for the GETDSN validity check routine    *
+*      to allow the IKJPARS macros to be isolated as a separate       *
+*      assembly provided the PDL does not change.                     *
+*   V1L3 -- February 2013                                             *
+*    * Add MASK(xxx) to command line to provide member selection      *
+*      masking                                                        *
+*   V1L2 -- November 2012                                             *
+*    * Correct load module AMODE display                              *
+*    * AMODE for alias entry correctly displayed                      *
+*   V1L1 -- November 2012                                             *
+*    * DUMP/FORMAT default changed to FORMAT                          *
+*    * Load module formatted output now includes AC and SSI.          *
+*    * HDR/HEADER/NOHDR/NOHEADER option added                         *
+*   V1L0 -- October 2012                                              *
+*                                                                     *
+* Command Line --                                                     *
+*   TSOLPDIR  'dslist'  DUMP/FORMAT  HDR/NOHDR/HEADER/NOHEADER        *
+*                                                                     *
+*     The FORMAT option directs TSOLPDIR to format directory entries  *
+*     containing ISPF statistics or load module directory entries.    *
+*     An ISPF directory entry is formatted like this -                *
+*                                                                     *
+*        1        2       3     4        5    6        7       8   9  *
+*     COPYMAN  0000070F 01.00 07SEP12  1051 07SEP12 11:11:41  1051 UU *
+*        1 - Member name                                              *
+*        2 - TTRC                                                     *
+*        3 - Version.modification                                     *
+*        4 - Date member created                                      *
+*        5 - Records in member when created                           *
+*        6 - Date member modified                                     *
+*        7 - Time of day member modified                              *
+*        8 - Records in member                                        *
+*        9 - User that last modified the member                       *
+*     A load module directory entry is formatted like this -          *
+*                                                                     *
+*        1        2        3        4    5              6   7   8   9 *
+*     LISTPDS  000004B3 TSOLPDIR 000F90 RN RU RF       ANY ANY 00 2012*
+*        1 - Member name                                              *
+*        2 - TTRC                                                     *
+*        3 - Alias of member                                          *
+*        4 - Storage requirement for load module                      *
+*        5 - Load module attributes                                   *
+*            RN - Load module is reenterable                          *
+*            RU - Load module is reusable                             *
+*            RF - Load module is refreshable                          *
+*            TS - Load module contains TESTTRAN symbols               *
+*            NX - Load module is not executable                       *
+*            OL - Load module is "only loadable."                     *
+*            SC - Load module is in scatter load format               *
+*            OV - Load module is in planned overlay format            *
+*        6 - Load module AMODE                                        *
+*        7 - Load module RMODE                                        *
+*        8 - Load module access code                                  *
+*        9 - Load module SSI (8 digits)                               *
+*                                                                     *
+* Attributes -- TSOLPDIR is reenterable, refreshable and reusable. It *
+*   operates as a TSO line mode command invoked from the TSO Terminal *
+*   Monitor Program, in TCB mode, problem key and problem state.  At  *
+*   entry, register 1 points to a TSO CPPL control block.  TSOLPDIR   *
+*   uses no APF restricted operating system services.                 *
+*                                                                     *
+* External Routines --                                                *
+*   * IKJPARS  -- The TSO command line analysis routine               *
+*   * IKJEFF02 -- The TSO message routine                             *
+*   * IKJEFF18 -- The TSO "DAIRFAIL" routine to prepare and issue     *
+*                 messages following a failed dynamic allocation.     *
+*   * IKJSTCK  -- The TSO STACK service routine.  STACK deletes the   *
+*                 current CLIST if IKJPARS wanted to prompt the       *
+*                 terminal operator for a valid dataset name, but     *
+*                 the prompt failed because the CLIST or Rexx exec    *
+*                 is running in NOPROMPT mode or PROFILE NOPROMPT     *
+*                 is in effect.                                       *
+*                                                                     *
+* Restrictions -                                                      *
+*   * Only load module directory entries constructed by the OS/VS     *
+*     version of the Linkage Editor and the Binder are formatted.     *
+*     Directory entries constructed by the OS/360 Linkage Editor are  *
+*     dumped.                                                         *
+*   * Directory entries for program objects larger than 16 meg are    *
+*     not formatted correctly.                                        *
+*   * The header displayed applies to the first directory entry.  If  *
+*     a different entry type is detected, the appropriate header is   *
+*     not displayed.                                                  *
+*                                                                     *
+* Messages -                                                          *
+*  LPDIR001I ddd IS NOT PARTITIONED!                                  *
+*   Reason - TSOLPDIR determined data set ddd is not partitioned.     *
+*   Action - TSO may prompt the terminal operator for the             *
+*    name of a partitioned data set.                                  *
+*   Response - The terminal operator should enter the data set name   *
+*    of a partitioned dataset if TSO prompts the operator, or the     *
+*    terminal operator should reenter the TSOLPDIR command            *
+*    specifying the data set name of a partitioned data set.          *
+*                                                                     *
+*  LPDIR002I ddd ON vvv                                               *
+*   Reason - TSOLPDIR is about to list the diectory for data set      *
+*    ddd on volume vvv                                                *
+*   Action - TSOLPDIR lists the directory.                            *
+*   Response - None required.                                         *
+*                                                                     *
+*  LPDIR004I aaa ALLOCATED DIRECTORY BLOCKS, uuu USED DIRECTORY       *
+*  BLOCKS                                                             *
+*   Reason - TSOLPDIR is summarizing directory block usage.  The      *
+*    directory contains aaa blocks, uuu blocks are used.              *
+*   Action - TSOLPDIR lists the directory of the next data set        *
+*    specified in the command line or terminates if all the data sets *
+*    specified in the command line have been processed.               *
+*   Response - None required.                                         *
+*                                                                     *
+*  LPDIR005I TSOLPDIR VERSION v LEVEL l ASSEMBLED ON mm/dd/yy AT      *
+*  hh:mm:ss                                                           *
+*   Reason - The VERSION option was specified in the command line;    *
+*    TSOLPDIR displays version information.                           *
+*   Action - TSOLPDIR displays the directories of the data sets       *
+*    specified in the command line.                                   *
+*   Response - The version and level information are the version and  *
+*    level of the TSOLPDIR command.  It has nothing to do with the    *
+*    version and level displayed in ISPF directory statistics.        *
+*                                                                     *
+* Y2K -- TSOLPDIR is Y2K compatible.  The dates it displays in        *
+*   formatted ISPF directory data contain a two digit year.  The leap *
+*   year calculation performed when converting the cyyddd date        *
+*   stored by ISPF to the ddmmmyy data displayed by TSOLPDIR is the   *
+*   entire Gregorian calculation.                                     *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+TSOLPDIR CSECT                     DEFINE PROGRAM CSECT
+         SYSSTATE ARCHLVL=2        DEFINE ARCHITECTURE LEVEL
+         PUSH  PRINT
+         PRINT NOGEN
+* DEFINE IKJPARS PCL AND PDL DATA AREAS
+LPDIRPCL IKJPARM DSECT=LPDIRPDL
+LPDIRDSN IKJPOSIT DSNAME,USID,LIST,PROMPT='PDS DATASET NAME',         ->
+               VALIDCK=GETDSN
+LPDIROPT IKJKEYWD DEFAULT='FORMAT'
+         IKJNAME DUMP
+         IKJNAME FORMAT
+LPDIRHDR IKJKEYWD DEFAULT='HDR'
+         IKJNAME HDR
+         IKJNAME HEADER
+         IKJNAME NOHDR
+         IKJNAME NOHEADER
+LPDIRK   IKJKEYWD ,
+         IKJNAME MASK,SUBFLD=LPDIRS1
+LPVERK   IKJKEYWD ,
+         IKJNAME VERSION
+LPDIRS1  IKJSUBF
+LPDIRMSK IKJIDENT 'MEMBER NAME MASK',FIRST=ANY,OTHER=ANY,MAXLNTH=8
+         IKJENDP ,
+LPDIRPCL CSECT                     RETURN TO PCL CSECT
+LPDIRPCL RMODE 31                  DEFINE THE RMODE
+         DC    0D'0'
+TSOLPDIR CSECT                     RETURN TO PROGRAM CSECT
+         IEFZB4D0 ,                DEFINE SVC 99 DATA AREAS
+         IEFZB4D2 ,                DEFINE SVC 99 TEXT UNIT KEYS
+         DCBD  DSORG=QS,DEVD=DA    DEFINE DCB DATA AREA
+         CVT   DSECT=YES           DEFINE THE CVT DATA AREA
+         IHAPDS PDSBLDL=NO         DEFINE PDS DIRECTORY ENTRY
+         ORG   PDS2USRD            RESET ORIGIN
+* ISPF DIRECTORY USER DATA
+SPFVER   DS    AL1                 VERSION
+SPFMOD   DS    AL1                 LEVEL
+SPFFLAGS DS    AL1
+SPFSCLM  EQU   X'80'               MEMBER PROCESSED BY SCLM
+SPFEXTN  EQU   X'20'               EXTENDED STATISTICS
+SPFMODSS DS    AL1                 SS PACKED DECIMAL DIGITS FOR LAST  ->
+                                    MODIFICATION TIME
+SPFCREAT DS    AL4                 CREATION DATE (0YYYDDDF)
+SPFMODD  DS    AL4                 LAST MOD DATE (0YYYDDDF)
+SPFMODT  DS    AL2                 PACKED DECIMAL DIGITS FOR LAST     ->
+                                    MODIFICATION TIME (HH:MM)
+SPFSIZE  DS    AL2                 RECORDS IN MEMBER
+SPFINIT  DS    AL2                 RECORDS IN MEMBER WHEN CREATED
+SPFMODR  DS    AL2                 MODIFIED RECORDS IN MEMBER
+SPFUSER  DS    CL8                 USERID
+SPFRESV  DS    CL2                 BLANK IF SPFEXTN = 0
+SPFLEN   EQU   *-PDS2USRD          BETTER BE 30 (X'1E') IF SPFEXTN = 0
+         ORG   SPFRESV             RESET THE LOCATION COUNTER
+SPFCLNES DS    FL4                 CURRENT LINES IF SPFEXTN = 1
+SPFILNES DS    FL4                 INITIAL LINES IF SPFEXTN = 1
+SPFMLNES DS    FL4                 MODIFIED LINES IF SPFEXTN = 1
+SPFXLEN  EQU   *-PDS2USRD
+         SPACE 1
+L        DSECT                     FORMATTED DIRECTORY OUTPUT
+LNMAME   DS    CL8,C               MEMBER NAME
+LTTRC    DS    CL8,C               TTRC
+LUSERD   EQU   *
+LVER     DS    CL2,C               VERSION
+LMOD     DS    CL2,C               MODIFICATION
+LCRDATE  DS    CL7                 MEMBER CREATION DATE DDMMMYY
+LCRECS   DS    CL8,C               INITIAL RECORDS
+LMODDATE DS    CL7,C               MODIFICATION DATE DDMMMYY
+LMODTIME DS    CL8                 MODIFICATION TIME HH:MM:SS
+LRECS    DS    CL8,C               CURRENT RECORDS
+LUSERID  DS    CL8                 USERID
+LSPFLEN  EQU   *-L
+         ORG   LUSERD
+LALIAS   DS    CL8,C               ALIAS OF
+LSIZE    DS    CL6,C               LOAD MODULE SIZE
+LATTR    DS    7CL3                ATTRIBUTES - RN RF RU OL NX TS SC
+LATTR1   EQU   LATTR+0,2
+LATTR2   EQU   LATTR+3,2
+LATTR3   EQU   LATTR+6,2
+LATTR4   EQU   LATTR+9,2
+LATTR5   EQU   LATTR+12,2
+LATTR6   EQU   LATTR+15,2
+LATTR7   EQU   LATTR+18,2
+LAMODE   DS    CL3,C               AMODE
+LRMODE   DS    CL3,C               RMODE
+LAC      DS    CL2,C               AC
+LSSI     DS    CL8                 SSI
+LLMLEN   EQU   (*-L)-1
+LCLEAR   EQU   LALIAS-1,(*-(LALIAS-1))
+         SPACE 2
+         IKJIOPL ,                 DEFINE THE TSO IOPL
+IOPLSIZE EQU   *-IOPL              DEFINE THE SIZE OF THE IOPL
+         SPACE 1
+         IKJCPPL .                 DEFINE THE TSO CPPL
+RCBUF    EQU   (CPPLCBUF-CPPL)/4+6 DEFINE REGISTERS
+RPSCB    EQU   (CPPLPSCB-CPPL)/4+6  CONTAINING CPPL DATA
+RECT     EQU   (CPPLECT-CPPL)/4+6    AFTER CPPL LOADED INTO
+RUPT     EQU   (CPPLUPT-CPPL)/4+6     REGS 6 THROUGH 9
+         SPACE 1
+         IKJPPL ,                  DEFINE TSO PPL
+SAVEAREA DS    (5*9)D              EXTEND THE PPL WITH THE TSOLPDIR
+GETDSAVE DS    (5*9)D               WORK AREA
+DYNPARM  DS    XL256               SVC 99 PARAMETER LIST AREA
+DSN      DS    CL44                DATASET NAME
+VOL      DS    CL6,0F              VOLUME SERIAL
+STACKPBS STACK MF=L                STORAGE FOR A STACK PARM LIST
+STACKPB  EQU   STACKPBS,*-STACKPBS
+         DS    0F
+MYIOPL   DS    XL(IOPLSIZE),0F     STORAGE FOR AN IOPL
+         IKJEFFDF DFDSECT=NO,DFDSEC2=YES  DAIRFAIL PARAMETER LIST
+PPL      DSECT
+         DS    0F
+         IKJEFFMT ,                IKJEFF02 PARAMETER LIST AND        ->
+                                    PARAMETER DATA
+ECB      DS    A                   EVENT CONTROL BLOCK
+PDLPTR   DS    A                   PDL ADDRESS
+DYNRC    DS    F                   SVC 99 RETURN CODE
+FF02ADDR DS    A                   ADDRESS OF IKJEFF02
+ALLOCCNT DS    F                   ALLOCATED DIRECTORY BLOCKS
+USEDCNT  DS    F                   USED DIRECTORY BLOCKS
+DDLIST   DS    2A
+MMASK    DS    CL8                 MEMBER MASK
+OPARMS   OPEN  (*-*,INPUT),MF=L    OPEN PARAMETER LIST
+OPARM    EQU   OPARMS,*-OPARMS
+CPARMS   CLOSE *-*,MF=L            CLOSE PARAMETER LIST
+CPARM    EQU   CPARMS,*-CPARMS
+DIRDCBS  DCB   DSORG=PS,MACRF=GL,DDNAME=FILLMEIN,EODAD=*-*, DIRECTORY ->
+               RECFM=F,LRECL=256,BLKSIZE=256                 DCB
+DIRDCB   EQU   DIRDCBS,*-DIRDCBS
+EOFRTN   DS    CL4                 EODAD CODE TO BR TO DIREOF
+IOBUF    DS    CL(78+4)            MESSAGE BUILD AREA
+AWORD    DS    CL5,C               DIRECTORY DATA HOLD AREA
+OPTION   DS    AL1                 COMMAND LINE OPTIONS & RUN SWITCHES
+DUMP     EQU   X'80'                 DUMP
+FORMAT   EQU   X'40'                 FORMAT
+HDR      EQU   X'20'                 HDR
+HDRLIST  EQU   X'01'               HEADER LISTED FOR CURRENT DATASET
+         DS    0D
+PPLSIZE  EQU   *-PPL               SIZE OF THE PPL AND WORK AREA
+         SPACE 5
+ADD      DSECT
+ADDNEXT  DS    A
+ADDNAME  DS    CL8
+ADDVOL   DS    CL6
+ADDDSN   DS    CL44,0D
+ADDSIZE  EQU   *-ADD
+         POP   PRINT
+         EJECT
+TSOLPDIR CSECT                     RETURN TO PROGRAM CSECT
+TSOLPDIR AMODE 31                  DEFINE PROGRAM AMODE
+TSOLPDIR RMODE ANY                 DEFINE PROGRAM RMODE
+         USING *,12                ESTABLISH PROGRAM ADDRESSABILITY
+         USING PPL,11              DEFINE PPL & WORK AREA ADDRESSING
+         USING CPPL,2              DEFINE CPPL ADDRESSABILITY
+         SAVE  (14,12),,'TSOLPDIR Copyright (C) 2013, 2021 J. Stephen M>
+               yers &SYSDATE &SYSTIME'
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 15
+         LR    2,1                 COPY CPPL ADDRESS TO REG 2
+         LHI   5,PPLSIZE           LOAD SIZE OF THE PPL & WORK AREA
+         GETMAIN RU,LV=(5),        ALLOCATE PPL & WORK AREA           ->
+               LOC=(24,ANY)
+         LR    4,1                 COPY ADDRESS TO REG 4 AND
+         LR    11,1                 TO REG 11
+         SR    15,15               SET REG 15 = 0
+         MVCL  4,14                CLEAR THE PPL & WORK AREA
+         LA    15,SAVEAREA         LOAD ADDR OF THE NEW SAVE AREA
+         ST    13,4(,15)           ADD NEW SAVE AREA TO THE
+         ST    15,8(,13)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH THE NEW SAVE AREA POINTER
+         LA    0,DDLIST-(ADDNEXT-ADD)  LOAD ADDR OF A DUMMY ADD
+         ST    0,DDLIST+4          INITIALIZE THE LAST ADD POINTER
+         MVC   DIRDCB,MASTDCB      COPY THE DCB TO THE WORK AREA
+         MVC   EOFRTN,EOFCODE      BUILD THE EODAD CODE BELOW THE LINE
+         LA    0,EOFRTN            LOAD ADDR OF THE INITIAL EODAD CODE
+         STCM  0,B'0111',DCBEODA-IHADCB+DIRDCB  STORE THE ADDRESS IN  ->
+                                                 DCB
+         LM    6,9,0(2)            LOAD THE CPPL INTO REGS 6 TO 9
+         ST    RCBUF,PPLCBUF       INITIALIZE
+         ST    RECT,PPLECT          THE
+         ST    RUPT,PPLUPT           PPL
+         LA    0,ECB
+         ST    0,PPLECB
+         ST    0,MTECBP
+         LA    0,PDLPTR
+         ST    0,PPLANS
+         ST    11,PPLUWA
+         L     0,=A(LPDIRPCL)
+         ST    0,PPLPCL
+         ST    2,DFCPPLP
+         L     15,CVTPTR           LOAD ADDRESS OF THE CVT
+         ICM   0,B'1111',CVTEFF02-CVTMAP(15)  LOAD ADDRESS OF IKJEFF02
+         JNZ   GOTFF02             BR IF THE ADDRESS IS IN THE CVT
+GETFF02  LOAD  EPLOC=IKJEFF02      LOAD IKJEFF02
+GOTFF02  ST    0,FF02ADDR          SAVE ITS ADDRESS
+         LA    0,FF02ADDR          INITIALIZE
+         ST    0,DFJEFF02           THE DAIRFAIL
+         LA    0,DYNRC               PARAMETER LIST
+         ST    0,DFRCP
+         LA    0,=AL1(0,DFSVC99)
+         ST    0,DFIDP
+         ST    2,MTCPPLP           INITIALIZE THE
+         LA    0,MTCPPLP            IKJEFF02
+         ST    0,MTPLPTR             PARAMETER
+         L     0,=A(LPDIRMSG)         LIST AND
+         ST    0,MTCSECTP              PARAMETER
+         MVI   MTSW1,MTPUTLSW           DATA AREA
+         LA    0,MTCSECTP
+         ST    0,MTPLPTR
+         SPACE 1
+* CALL IKJPARS TO EXTRACT THE DATA SET NAMES FROM THE COMMAND LINE
+* THE DATA SETS ARE ALLOCATED BY THE VALIDITY CHECK EXIT, IT STORES
+* DATA SET INFORMATION IN ADD ELEMENTS STORED IN A LINKED LIST.
+         SPACE 1
+         L     15,CVTPTR           LOAD ADDR OF THE CVT
+         ICM   15,B'1111',CVTPARS-CVTMAP(15)  LOAD ADDR OF IKJPARS
+         JZ    LINKPARS            BR IF IKJPARS NOT PRELOADED
+         CALL  (15),MF=(E,(11))    CALL IKJPARS
+         J     TESTRC              BR AROUND THE LINK MACRO
+LINKPARS LINK  SF=(E,CALLPARS),MF=(E,(11))  GET THE DATASET NAME
+TESTRC   LTR   15,15               TEST THE RETURN CODE
+         JZ    LISTDIR             BR IF IKJPARS COMPLETED OK
+         TCLEARQ INPUT             DISCARD ANY UNEXECUTED INPUT
+         XC    STACKPB,STACKPB     CLEAR THE STACK PARM LIST
+         XC    MYIOPL,MYIOPL       CLEAR THE IOPL
+         STACK MF=(E,MYIOPL),      KILL THE CURRENT CLIST             ->
+               PARM=STACKPB,                                          ->
+               UPT=(RUPT),ECT=(RECT),ECB=ECB,                         ->
+               DELETE=PROC,                                           ->
+               ENTRY=LINKSTACK
+LINKSTACK LINK SF=(E,CALLSTACK),MF=(E,(1))
+         J     EXIT                AND EXIT
+LISTDIR  L     10,PDLPTR           LOAD ADDR OF THE PDL
+         ICM   0,B'0011',LPVERK-LPDIRPDL(10)  LOAD THE VERION KEYWORD
+         JZ    NOVER               BR IF VERSION NOT SPECIFIED
+         MVC   MTMSGID,=C'MS05'    SET THE MESSAGE ID
+         L     15,FF02ADDR         LOAD THE IKJEFF02 ADDRESS
+         CALL  (15),MF=(E,MTPARML) WRITE THE VERSION MESAAGE
+NOVER    LH    0,LPDIROPT-LPDIRPDL(,10)  LOAD THE DUMP / FORMAT OPTION
+         CHI   0,1                 TEST IF DUMP
+         JNE   *+L'*+8             BR IF NOT
+         OI    OPTION,DUMP         SET DUMP
+         J     TESTHDR
+         CHI   0,2                 TEST IF FORMAT
+         JNE   *+L'*+4             BR IF NOT
+         OI    OPTION,FORMAT       SET FORMAT
+TESTHDR  LH    0,LPDIRHDR-LPDIRPDL(,10)  LOAD THE HEADER OPTION
+         CHI   0,3                 TEST IF HDR
+         JNL   *+L'*+4             BR IF NOT HDR OR HEADER
+         OI    OPTION,HDR          SET FLAG
+         CHI   0,3                 TEST IF NOHDR OR NOHEADER
+         JNH   *+L'*+4             BR IF NOT NOHDR OR NOHEADER
+         NI    OPTION,255-HDR      RESET HDR
+         MVC   MMASK,=CL8' '       INIT MMASK
+         TM    (LPDIRMSK-LPDIRPDL)+6(10),X'80'  TEST IF MASK(XXX)
+         JZ    RELEASE             BR IF NOT
+         LA    14,MMASK            LOAD ADDR OF MMASK
+         LHI   15,L'MMASK          LOAD THE LENGTH
+         L     0,(LPDIRMSK-LPDIRPDL)(,10)  LOAD ADDR OF THE MASK      ->
+                                            IN THE COMMAND LINE
+         LH    1,(LPDIRMSK-LPDIRPDL)+4(,10)  LOAD THE LENGTH
+         ICM   1,B'1000',=CL8' '   LOAD THE FILL CHARACTER
+         MVCL  14,0                COPY MASK TO MMASK
+         SPACE 1
+* RELEASE THE PDL BUILT BY IKJPARS.  WE DO NOT NEED THE PDL SINCE ALL
+* RELEVANT DATA SET INFORMATION IS IN ADD ELEMENTS.
+         SPACE 1
+RELEASE  IKJRLSA PDLPTR            RELEASE THE PDL
+         SPACE 1
+* PROCESS THE ADD ELEMENTS BUILT BY THE VALIDITY CHECK ROUTINE
+         SPACE 1
+NEXTDD   ICM   1,B'1111',DDLIST    LOAD ADDR OF THE MEXT ADD
+         JZ    EXIT                BR IF ALL ADDS HAVE BEEN PROCESSED
+         NI    OPTION,255-HDRLIST  RESET HDRLIST
+         MVC   DDLIST,ADDNEXT-ADD(1)  REMOVE THE ADD FROM THE ADD CHAIN
+         MVC   DCBDDNAM-IHADCB+DIRDCB,ADDNAME-ADD(1) COPY DDNAME TO DCB
+         MVC   DSN,ADDDSN-ADD(1)   SAVE THE DATASET NAME
+         MVC   VOL,ADDVOL-ADD(1)   SAVE THE VOLUME
+         LHI   0,ADDSIZE           LOAD THE SIZE OF AN ADD
+         FREEMAIN RU,LV=(0),A=(1)  FREE THE ADD
+         SR    0,0                 SET REG 0 = 0
+         ST    0,ALLOCCNT          INITIALIZE ALLOCCNT AND
+         ST    0,USEDCNT            USEDCNT
+         MVC   OPARM,MASTOPEN      INITIALIZE THE OPEN PARM LIST
+         OPEN  DIRDCB,MF=(E,OPARM) OPEN THE DIRECTORY
+         LA    0,DSN               ISSUE THE
+         LA    1,VOL                DATASET
+         STM   0,1,MTINSRTS          ON
+         MVI   MTINSRTS,L'DSN         VOLSER
+         MVI   MTINSRTS+4,L'VOL        MESSAGE
+         MVC   MTMSGID,=C'MS02'
+         L     15,FF02ADDR
+         CALL  (15),MF=(E,MTPARML)
+         NOPR  0
+DIR0100  GET   DIRDCB              READ A DIRECTORY BLOCK
+         LHI   0,1                 UPDATE
+         A     0,ALLOCCNT           ALLOCATED
+         ST    0,ALLOCCNT            DIRECTORY BLOCKS
+         LHI   0,1                 UPDATE
+         A     0,USEDCNT            USED
+         ST    0,USEDCNT             DIRECTORY BLOCKS
+         LH    5,0(,1)             LOAD USED BYTES IN THE BLOCK
+         AR    5,1                 COMPUTE END OF USED DATA IN THE BLK
+         BCTR  5,0                 COMPUTE ADDR OF LAST USED BYTE
+         LA    3,2(,1)             COMPUTE ADDR OF THE FIRST          ->
+                                    DIRECTORY ENTRY IN THE BLOCK
+         USING PDS2,3              ESTABLISH DIRECTORY ENTRY ADDRESSING
+DIR0200  CLC   =FL8'-1',PDS2NAME   TEST IF LOGICAL END OF DIRECTORY
+         JE    DIR2200             BR IF SO
+         TM    MMASK,255-C' '      IS THERE A MASK?
+         JZ    DIR0600             BR IF NOT
+         LA    14,PDS2NAME         INIT REG 14
+         LA    15,MMASK            INIT REG 15
+         LHI   0,L'MMASK           INIT REG 0
+DIR0300  CLI   0(15),C'*'          TEST IF END
+         JE    DIR0600             BR IF SO
+         CLI   0(15),C'%'          TEST IF ANY CHARACTER
+         JE    DIR0500             BR IF SO
+         CLI   0(15),C'#'          TEST IF NUMERIC
+         JNE   DIR0400             BR IF NOT
+         CLI   0(14),C'0'          TEST IF NUMERIC
+         JL    DIR2100             BT IF NOT
+         CLI   0(14),C'9'          TEST IF NUMERIC
+         JNH   DIR0500             BR IF SO
+         J     DIR2100             BR IF NOT NUMERIC
+DIR0400  CLC   0(1,14),0(15)       COMPARE A CHARACTER
+         JNE   DIR2100             BR IF NOT EQUAL
+DIR0500  AHI   14,1                BUMP NAME POINTER
+         AHI   15,1                BUMP MASK POINTER
+         BRCT  0,DIR0300           GO TEST THE NEXT CHARACTER
+DIR0600  MVC   IOBUF+4(L'PDS2NAME),PDS2NAME  COPY THE DIRECTORY NAME
+         MVI   L'PDS2NAME+4+IOBUF,C' '
+         MVC   AWORD(4),PDS2TTRP   CONVERT TTRC TO 8 HEXADECIMAL DIGITS
+         UNPK  L'PDS2NAME+5+IOBUF(9),AWORD(5)
+         TR    L'PDS2NAME+5+IOBUF(8),HEXTAB
+         MVI   L'PDS2NAME+5+8+IOBUF,C' '
+         TM    OPTION,FORMAT       TEST IF FORMAT
+         JZ    DIR1200             BR IF NOT
+         USING L,IOBUF+4           ESTABLISH ADDRESSABILITY
+         IC    0,PDS2INDC          LOAD PDS2INDC
+         N     0,=A(PDS2LUSR)      ISOLATE THE LENGTH OF USER DATA
+         CHI   0,SPFXLEN/2         TEST IF EXTENDED ISPF USER DATA
+         JNE   DIR0610             BR IF NOT
+         TM    SPFFLAGS,SPFEXTN    TEST EXTENDED STATISTIC FLAG
+         JZ    DIR0700             BR IF EXTENDED STATS FLAG NOT ON
+         J     DIR0620             CONTINUE PROCESSING SPF STATITICS
+DIR0610  CHI   0,SPFLEN/2          TEST IF ISPF USER DATA
+         JNE   DIR0700             BR IF NOT
+DIR0620  TM    PDS2INDC,PDS2NTTR   TEST IF TTR DATA IN USER DATA
+         JNZ   DIR0700             BR IF SO, IT MUST BE A LOAD MODULE
+         ST    2,12(,13)           SAVE REG 2
+         TRT   SPFMODT,TESTPACK    VERIFY SPFMODT CONTAINS PACKED     ->
+                                    DECIMAL DIGITS
+         L     2,12(,13)           RESTORE REG 2
+         JNZ   DIR1200             BR IF TIME IS BAD
+         TRT   SPFMODSS,TESTPACK   VERIFY SPFMODSS CONTAINS PACKED    ->
+                                    DECIMAL DIGITS
+         L     2,12(,13)           RESTORE REG 2
+         JNZ   DIR1200             BR IF TIME IS BAD
+         LA    0,LUSERD            LOAD ADDR OF VARIABLE DATA
+         LHI   1,(LRECS-LUSERD)+L'LRECS  LOAD LENGTH OF VARIABLE DATA
+         L     15,=AL1(C' ',0,0,0) LOAD THE FILL CHARACTER
+         MVCL  0,14                SET VARIABLE AREA TO BLANK
+         SR    0,0                 SET REG 0 = 0
+         IC    0,SPFVER            LOAD THE VERSION
+         CVD   0,16(,13)           CONVERT VERSION
+         OI    16+7(13),X'0F'       TO DECIMAL
+         UNPK  LVER,16(8,13)         DIGITS
+         MVI   LVER+L'LVER,C'.'
+         IC    0,SPFMOD            LOAD MOD LEVEL
+         CVD   0,16(,13)           CONVERT MOD LEVEL
+         OI    16+7(13),X'0F'       TO DECIMAL
+         UNPK  LMOD,16(8,13)         DIGITS
+         ICM   1,B'1111',SPFCREAT  LOAD DATE MEMBER CREATED
+         BRAS  14,CNVTDATE         CONVERT DATE TO DDMMMYY
+         MVC   LCRDATE,64(13)      COPY DATE TO OUTPUT BUFFER
+         ICM   1,B'1111',SPFMODD   LOAD MODIFICATION DATE
+         BRAS  14,CNVTDATE         TRANSLATE DATE TO DDMMMYY
+         MVC   LMODDATE,64(13)     COPY DATE TO MESSAGE
+         MVI   LUSERID-1,C' '      INSERT FILL CHARACTER
+         MVC   LUSERID,SPFUSER     COPY USER
+         MVC   16(L'LTIME,13),LTIME  COPY EDIT MASK TO WORK AREA
+         MVC   16+L'LTIME(L'SPFMODT,13),SPFMODT  COPY HH:MM PORTION   ->
+                                                  OF MODIFICATION     ->
+                                                   TIME TO WORK AREA
+         MVC   16+L'LTIME+L'SPFMODT(L'SPFMODSS,13),SPFMODSS COPY SS   ->
+                                    PORTION OF MODIFICATION TIME TO   ->
+                                    WORK AREA
+         ED    16(L'LTIME,13),16+L'LTIME(13) FORMAT MODIFICATION TIME
+         MVC   LMODTIME,16+1(13)   COPY MODIFICATION TIME TO MSG
+         SR    0,0                 SET REG 0 = 0
+         ICM   0,B'0011',SPFINIT   LOAD INITIAL SIZE
+         TM    SPFFLAGS,SPFEXTN    TEST IF EXTENDED DATA
+         JZ    *+L'*+4             BR IF NOT
+         ICM   0,B'1111',SPFILNES  LOAD INITIAL LINES
+         C     0,=F'999999'        TEST THE SIZE
+         JNH   CNVTLCRE            BR IF OK
+         MVC   LCRECS,=C' *******'   TOO LARGE
+         B     CHKLRE
+CNVTLCRE CVD   0,16(,13)           CONVERT INITIAL SIZE TO DECIMAL
+         MVC   LCRECS,=X'4020202020202120' COPY EDIT MASK TO OUTPUT
+         ED    LCRECS,16+4(13)     CONVERT INITIAL SIZE TO DIGITS
+CHKLRE   ICM   0,B'0011',SPFSIZE   LOAD CURRENT RECORD COUNT
+         TM    SPFFLAGS,SPFEXTN    TEST IF EXTENDED DATA
+         JZ    *+L'*+4             BR IF NOT
+         ICM   0,B'1111',SPFCLNES  LOAD CURRENT LINES
+         C     0,=F'999999'        TEST THE SIZE
+         JNH   CNVTLRE
+         MVC   LRECS,=C' *******'   TOO LARGE
+         J     WRITEMBR
+CNVTLRE  CVD   0,16(,13)           CONVERT RECORD COUNT TO DECIMAL
+         MVC   LRECS,=X'4020202020202120'  COPY EDIT MASK TO OUTPUT
+         ED    LRECS,16+4(13)      CONVERT CURRENT SIZE TO DIGITS
+WRITEMBR LA    0,IOBUF+4           LOAD ADDR OF THE I/O BUFFER
+         ST    0,MTINSRTS          STORE ITS ADDRESS
+         MVI   MTINSRTS,LSPFLEN    STORE THE LENGTH
+         L     0,=C'HDR2'          LOAD THE HEADER MSGID
+         BRAS  14,PUTHDR           WRITE THE HEADER
+         L     0,=C'MS03'          LOAD THE MESSAGE ID
+         BRAS  14,PUTDATA          WRITE THE LINE
+         J     DIR2100             GO GET THE NEXT DIRECTORY ENTRY
+DIR0700  IC    0,PDS2INDC          LOAD INDC
+         N     0,=A(PDS2LUSR)      ISOLATE THE LENGTH OF USER DATA
+         CLM   0,B'0001',=AL1((PDSBCEND-PDS2USRD)/2)  TEST LENGTH
+         JL    DIR1200             BR IF NOT A LOAD MODULE
+         TM    PDS2FTB1,PDSAOSLE   TEST IF VS2 LINK EDIT OR BINDER
+         JZ    DIR1200             BR IF OS/360 LINK EDIT
+         MVI   LCLEAR,C' '                 CLEAR THE
+         MVC   LCLEAR+1(L'LCLEAR-1),LCLEAR  OUTPUT AREA
+         LA    15,PDSBCEND         LOAD ADDR OF THE END OF THE BASIC  ->
+                                    SEGMENT
+         TM    PDS2ATR1,PDS2SCTR   TEST IF SCATTER LOAD
+         JZ    *+L'*+4             BR IF NOT
+         AHI   15,PDSS01LN         ADD STORAGE USED BY SCATTER LOAD   ->
+                                    SEGMENT
+         TM    PDS2INDC,PDS2ALIS   TEST IF ALIAS
+         JZ    *+L'*+4             BR IF NOT
+         AHI   15,PDSS02LN         SKIP PAST ALIAS SEGMENT
+         TM    PDS2FTB1,PDS2SSI    TEST IF SSI DATA
+         JZ    DIR0800             BR IF NOT
+         LR    14,15               COPY CURRENT POSITION TO REG 14
+         SR    14,3                COMPUTE CURRENT OFFSET
+         N     14,=A(B'1')         TEST IF BYTE OFFSET
+         JZ    *+L'*+4             BR IF ALREADY HALFWORD ALIGNED
+         AHI   15,1                GET CORRECT OFFSET
+         UNPK  LSSI(9),PDSSSIWD-PDSS03(5,15)  CONVERT SSI TO
+         TR    LSSI,HEXTAB                     HEXADECIMAL DIGITS
+         AHI   15,PDSS03LN         COMPUTE ADDR OF THE APF SEGMENT
+DIR0800  TM    PDS2FTB1,PDSAPFLG   TEST IF APF DATA IS VALID
+         JZ    DIR1100             BR IF NOT
+         SR    14,14               SET REG 14 = 0
+         IC    14,PDSAPFCT-PDSS04(15)  LOAD THE LENGTH
+         IC    14,DIR0900-1(14)    LOAD THE ICM BITS FOR THE LENGTH
+         EX    14,DIR1000          LOAD THE APF CODE
+         CVD   14,16(,13)          COMVERT THE APF CODE TO DECIMAL
+         OI    16+7(13),X'0F'      UPDATE THE SIGN
+         UNPK  LAC,16(8,13)        CONVERT THE APF CO0DE TO DECIMAL
+         J     DIR1100
+DIR0900  DC    AL1(B'0001',B'0011',B'0111',B'1111')
+DIR1000  ICM   14,*-*,PDSAPFAC-PDSS04(15)  ** EXECUTE ONLY **
+DIR1100  UNPK  LSIZE(7),PDS2STOR(4)  TRANSLATE SIZE TO
+         TR    LSIZE,HEXTAB           HEX DIGITS
+         MVI   LSIZE+L'LSIZE,C' '
+         IC    1,PDS2FTB2          LOAD AMODE FLAGS
+         TM    PDS2INDC,PDS2ALIS   TEST IF ALIAS                   V1L2
+         JZ    *+L'*+4             BR IF NOT                       V1L2
+         SRL   1,2                 SHIFT PDS2FTB2 2 BITS TO THE RIGHT 2
+         N     1,=A(PDSMAMOD)      ISOLATE THE BITS
+         MHI   1,3                 MULTIPLY BY 3
+         LA    0,=C'24 64 31 ANY'  LOAD ADDR OF AMODE TEXT         V1L2
+         AR    1,0                 COMPUTE ADDR OF AMODE TEXT
+         MVC   LAMODE,0(1)         COPY AMODE
+         MVC   LRMODE,=C'24 64 31 ANY'  INIT RMODE                 V1L2
+         TM    PDS2FTB2,PDSLRMOD   TEST RMODE BIT
+         JZ    *+L'*+6             BR IF NOT RMODE ANY
+         MVC   LRMODE,=C'ANY'      INIT RMODE
+         TM    PDS2ATR1,PDS2RENT   TEST IF RENT
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR1,=C'RN'
+         TM    PDS2ATR1,PDS2REUS   TEST IF REUS
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR2,=C'RU'
+         TM    PDS2ATR2,PDS2REFR   TEST IF REFR
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR3,=C'RF'
+         TM    PDS2ATR1,PDS2LOAD   TEST IF ONLY LOADABLE
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR4,=C'OL'
+         TM    PDS2ATR1,PDS2EXEC   TEST IF EXECUTABLE
+         JO    *+L'*+6             BR IF SO
+         MVC   LATTR5,=C'NX'
+         TM    PDS2ATR2,PDS2TSTN   TEST IF TEST
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR6(2),=C'TS'
+         TM    PDS2ATR1,PDS2SCTR   TEST IF SCATTER LOAD
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR7,=C'SC'
+         TM    PDS2ATR1,PDS2OVLY   TEST IF OVERLAY
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LATTR7,=C'OV'
+         LA    15,PDSS01
+         TM    PDS2ATR1,PDS2SCTR   TEST IF SCATTER LOAD
+         JZ    *+L'*+4             BR IF NOT
+         LA    15,PDSS01LN(,15)    UPDATE REG 15
+         TM    PDS2INDC,PDS2ALIS   TEST IF ALIAS
+         JZ    *+L'*+6             BR IF NOT
+         MVC   LALIAS,PDS2MNM-PDSS02(15)
+         LA    0,L
+         ST    0,MTINSRTS
+         LA    14,LSSI+L'LSSI      LOAD THE END OF SSI DATA
+         BCTR  14,0                BACKUP 1 BYTE
+         TM    0(14),255-C' '      TEST IF DATA
+         JZ    *-6                 BR IF NOT
+         AHI   14,1                COMPUTE ADDR OF END OF DATA
+         SR    14,0                COMPUTE THE LENGTH
+         STC   14,MTINSRTS         STORE THE LENGTH
+         L     0,=C'HDR3'          LOAD HEADER MSGID
+         BRAS  14,PUTHDR           WRITE THE HEADER
+         L     0,=C'MS03'          LOAD THE MESSAGE ID
+         BRAS  14,PUTDATA          WRITE THE MESSAGE
+         J     DIR2100             GO GET THE NEXT DIRECTORY ENTRY
+*        DROP  IOBUF+4
+DIR1200  LA    6,L'PDS2NAME+5+8+IOBUF
+         IC    9,PDS2INDC          LOAD PDS2INDC
+         N     9,=A(PDS2LUSR)      ISOLATE NUMBER OF HALFWORDS OF     ->
+                                    USER DATA
+         JZ    DIR2000             BR IF NO USER DATA
+         AR    9,9                 CONVERT HALFWORD COUNT TO BYTES
+         LA    8,PDS2USRD          LOAD START OF USER DATA
+         LH    7,LRECL             LOAD THE MAX RECORD LENGTH
+         LA    7,IOBUF(7)          COMPUTE END OF THE LINE AREA
+DIR1300  LA    6,L'PDS2NAME+5+8+IOBUF
+DIR1400  CHI   9,5                 TEST IF 5 OR FEWER BYTES REMAIN
+         JNH   DIR1600             BR IF SO
+* TRANSLATE 5 BYTES TO 10 HEX DIGITS
+         LA    15,11(,6)           COMPUTE TRIAL END OF LINE
+         CR    15,7                TEST IF GROUP WILL FIT
+         JNH   DIR1500             BR IF SO
+* WRITE THE LINE
+         LA    0,IOBUF+4
+         ST    0,MTINSRTS
+         SR    6,0                 COMPUTE THE DATA LENGTH
+         STC   6,MTINSRTS
+         L     0,=C'HDR1'          LOAD HEADER MSGID
+         BRAS  14,PUTHDR           WRITE THE HEADER
+         L     0,=C'MS03'          LOAD THE MESSAGE ID
+         BRAS  14,PUTDATA          WRITE THE MESSAGE
+         MVI   IOBUF+4,C' '        BLANK THE FIRST PART OF IOBUF
+         MVC   IOBUF+5(20),IOBUF+4
+         J     DIR1300             CONTINUE
+DIR1500  MVI   0(6),C' '           NOW CONVERT
+         UNPK  1(11,6),0(6,8)       5 DATA BYTES TO
+         TR    1(10,6),HEXTAB        10 GEXADECIMAL DIGITS
+         AHI   6,11                UPDATE THE OUTPUT POINTER
+         AHI   9,-5                SUBTRACT 5 FROM BYTES LEFT
+         AHI   8,5                 UPDATE THE INPUT POINTER
+         J     DIR1400
+* 1 TO 5 BYTES REMAIN IN THE USER DATA, TRANSLATE TO HEX DIGITS
+DIR1600  LR    1,9                 COPY REMAINING
+         LR    0,8                  USER DATA TO
+         LR    15,9                  AWORD
+         LA    14,AWORD
+         MVCL  14,0
+         LA    15,1(9,9)           COMPUTE TRIAL END OF CONVERTED DATA
+         AR    15,6
+         CR    15,7                TEST IF LAST GROUP WILL FIT ON LINE
+         JNH   DIR1900             BR IF SO
+         LA    0,IOBUF+4
+         ST    0,MTINSRTS
+         SR    6,0
+         STC   6,MTINSRTS
+         L     0,=C'HDR1'          LOAD HEADER MSGID
+         BRAS  14,PUTHDR           WRITE THE HEADER
+         L     0,=C'MS03'          LOAD THE MESSAGE ID
+         BRAS  14,PUTDATA          WRITE THE MESSAGE
+         MVI   IOBUF+4,C' '
+         MVC   IOBUF+5(20),IOBUF+4
+         LA    6,L'PDS2NAME+5+8+IOBUF
+         J     DIR1900
+DIR1700  UNPK  1(*-*,6),AWORD(*-*) ** EXECUTE ONLY **
+DIR1800  TR    1(*-*,6),HEXTAB     ** EXECUTE ONLY **
+DIR1900  LA    1,0(9,9)            COMPUTE OUTPUT LENGTH
+         SLL   1,4
+         OR    1,9                 ADD INPUT LENGTH TO OUTPUT LENGTH
+         MVI   0(6),C' '           INSERT A BLANK
+         EX    1,DIR1700           TRANSLATE 1 TO 5 BYTES
+         SRL   1,4                  TO
+         EX    1,DIR1800             HEXADECIMAL DIGITS
+         LA    6,1(1,6)            UPDATE THE OUTPUT POINTER
+* WRITE THE LINE
+DIR2000  LA    0,IOBUF+4
+         ST    0,MTINSRTS
+         SR    6,0
+         STC   6,MTINSRTS
+         L     0,=C'HDR1'          LOAD HEADER MSGID
+         BRAS  14,PUTHDR           WRITE THE HEADER
+         L     0,=C'MS03'          LOAD THE MESSAGE ID
+         BRAS  14,PUTDATA          WRITE THE MESSAGE
+DIR2100  IC    4,PDS2INDC          LOAD PDS2INDC
+         N     4,=A(PDS2LUSR)      ISOLATE LENGTH OF USER DATA
+         LA    4,PDS2USRD-PDS2(4,4)  COMPUTE THE ACTUAL LENGTH OF THE ->
+                                      DIRECTORY ENTRY
+         BRXLE 3,4,DIR0200         COMPUTE ADDR OF THE NEXT DIRECTORY ->
+                                    ENTRY, BR IF IT'S IN THE CURRENT  ->
+                                     DIRECTORY BLOCK
+         J     DIR0100             GO READ THE NEXT DIRECTORY BLOCK
+* LOGICAL END OF DIRECTORY FOUND, READ THROUGH THE REMAINING
+* DIRECTORY BLOCKS
+DIR2200  GET   DIRDCB
+         LHI   0,1
+         A     0,ALLOCCNT
+         ST    0,ALLOCCNT
+         J     DIR2200
+DIREOF   MVC   CPARM,MASTCLOS      CLOSE THE DIRECTORY
+         CLOSE DIRDCB,MF=(E,CPARM)
+         FREEPOOL DIRDCB           FREE THE BUFFER POOL
+         MVC   DYNPARM(UL),U       FREE THE ALLOCATION
+         MVC   UDDN-U+DYNPARM,DCBDDNAM-IHADCB+DIRDCB
+         BRAS  14,DYNALLOC
+         LA    0,ALLOCCNT          WRITE ALLOCATED & USED BLOCKS
+         LA    1,USEDCNT
+         STM   0,1,MTINSRTS
+         MVI   MTINSRTS+00,X'80'+L'ALLOCCNT
+         MVI   MTINSRTS+04,X'80'+L'USEDCNT
+         MVC   MTMSGID,=C'MS04'
+         L     15,FF02ADDR
+         CALL  (15),MF=(E,MTPARML)
+         J     NEXTDD              GO LIST THE NEXT DATASET
+EXIT     ICM   2,B'1111',DDLIST    LOAD ADDR OF THE NEXT ADD
+         JZ    X0100               BR IF ALL ADD ENTRIES FREED
+         MVC   DDLIST,ADDNEXT-ADD(2)  REMOVE THIS ENTRY FROM THE LIST
+         MVC   DYNPARM(UL),U       INITIALIZE DYNPARM
+         MVC   UDDN-U+DYNPARM,ADDNAME-ADD(2) COPY DDNAME TO DYNPARM
+         BRAS  14,DYNALLOC         FREE THE DD
+         LHI   0,ADDSIZE           LOAD THE SIZE OF THE ADD
+         FREEMAIN RU,LV=(0),A=(2)  FREE THE ADD
+         J     EXIT                GO RELEASE THE NEXT ADD
+X0100    DC    0H'0'
+*        DELETE EPLOC=IKJEFF02     REMOVE IKJEFF02 FROM STORAGE
+         L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         LHI   0,PPLSIZE           LOAD LENGTH OF THE PPL & WORK AREA
+         FREEMAIN RU,LV=(0),A=(11) FREE THE PPL & WORK AREA
+         RETURN (14,12),T,RC=0     RESTORE REGS & RETURN TO THE TMP
+         SPACE 1
+EOFCODE  B     DIREOF              BR TO MAINLINE EOF CODE
+         EJECT
+PUTHDR   TM    OPTION,HDRLIST      TEST IF HEADER ALREADY LISTED
+         BOR   14                  RETURN IF SO
+         TM    OPTION,HDR          TEST IF HDR OPTION
+         BZR   14                  RETURN IF NOHDR
+         OI    OPTION,HDRLIST      FLAG THAT HEADER HAS BEEN LISTED
+         SPACE 1
+PUTDATA  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,1),,PUTDATA     SAVE REGISTERS
+         LA    15,72(,13)          COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    15,8(,13)           ADD NEW SAVE AREA TO THE
+         ST    13,4(,15)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH THE NEW SAVE AREA POINTER
+         STCM  0,B'1111',MTMSGID   STORE THE MESSAGE ID
+         OI    MTSW1,MTNOIDSW      INDICATE DATA MODE
+         L     15,FF02ADDR         LOAD ADDRESS OF IKJEFF02
+         CALL  (15),MF=(E,MTPARML) WRITE THE MESSAGE
+         NI    MTSW1,255-MTNOIDSW  RESET MTNOIDSW
+         L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         RETURN (14,1),T,RC=(15)   RESTORE REGS & RETURN
+         EJECT
+* CONVERT 0CYYDDDF IN REG 1 TO DDMMMYY, RETURN THE ADDRESS OF DDMMMYY
+* IN REG 1.  THE OUTPUT IS ACTUALLY IN THE CALLER'S SAVE AREA; CNVTDATE
+* USES THE REGISTER 9 THROUGH 12 AREAS IN THE SAVE AREA AS ITS WORK
+* AREA AND OUTPUT AREA; THESE REGISTERS ARE NOT SAVED BECAUSE THEY ARE
+* NOT USED BY CNVTDATE.
+         CNOP  0,8
+CNVTDATE BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,1),,CNVTDATE    SAVE REGISTERS
+         MVC   64(7,13),=7C'?'     INIT THE OUTPUT
+         TP    24(4,13)            TEST IF DATE IS PACKED DECIMAL
+         JNZ   CVD0300             BR IF NOT
+         ZAP   56(8,13),24(4,13)   EXPAND DATE TO 8 BYTES
+         JNP   CVD0300             BR IF DATE VALUE IS INVALID
+         CVB   1,56(,13)           CONVERT DATE TO BINARY
+         SR    0,0                 SET REG 0 = 0
+         D     0,=F'1000'          SEPARATE CYY AND DDD
+* CYY IS IN REG 1, DDD IS IN REG 0
+         CVD   1,56(,13)           CONVERT CYY TO PACKED DECIMAL
+         OI    56+7(13),X'0F'      UPDATE THE SIGN
+         UNPK  64+5(2,13),56(8,13) CONVERT YY TO DIGITS
+         LA    15,1900(,1)         CONVERT CYY TO YYYY
+         LR    14,15               COPY YYYY TO REG 14
+         N     14,=A(B'11')        ISOLATE THE LOW ORDER 2 BITS OF YYYY
+         JNZ   CVD0100             BR IF YYYY IS NOT A LEAP YEAR
+         D     14,=F'100'          DIVIDE YYYY BY 100
+         LTR   14,14               TEST REMAINDER
+         JNZ   CVD0200             BR IF YYYY IS NOT A CENTURY YEAR
+         N     15,=A(B'11')        TEST IF YYYY IS A MULTIPLE OF 400
+         JZ    CVD0200             BR IF CENTURY YEAR LEAP YEAR
+CVD0100  CHI   0,31+28             TEST DAY OF YEAR
+         JNH   CVD0200             BR IF DAY OF YEAR <= FEB 28
+         AHI   0,1                 PRETEND YEAR IS A LEAP YEAR
+CVD0200  CHI   0,366               TEST DAY OF YEAR
+         JH    CVD0300             BR IF DAY OF YEAR > 366
+         LR    15,0                COPY DAY OF YEAR TO REG 15
+         SR    14,14               SET REG 14 = 0
+         IC    14,MONTAB(15)       LOAD MONTH
+         LR    15,14               COPY MONTH TO REG 15
+         MHI   15,3                MULTIPLY MONTH BY 3
+         LA    15,MONNAME(15)      COMPUTE ADDR OF ABBREVIATED MONTH
+         MVC   64+2(3,13),0(15)    COPY ABBREVIATED MONTH TO OUTPUT
+         AR    14,14               MULTIPLY MONTH BY 2
+         SH    0,MONTABD(14)       COMPUTE DAY OF MONTH
+         CVD   0,56(,13)           CONVERT DAY OF MONTH TO PACKED DEC
+         OI    56+7(13),X'0F'      ALTER THE SIGN
+         UNPK  64(2,13),56(8,13)   CONVERT DAY OF MONTH TO DIGITS
+CVD0300  LA    1,64(,13)           LOAD ADDR OF OUTPUT
+         ST    1,24(,13)           REPLACE CALLER'S REG 1 W/OUTPUT ADDR
+         RETURN (14,1),T           RESTORE REGS & RETURN
+         SPACE 1
+         DROP  ,
+         EJECT
+         CNOP  0,8
+DYNALLOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         USING PPL,11              ESTABLISH WORK AREA ADDRESSABILITY
+         SAVE  (14,12),,DYNALLOC   SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LA    15,72(,13)          ADD NEW SAVE AREA
+         ST    13,4(,15)            TO THE SAVE AREA CHAIN
+         ST    15,8(,13)
+         LR    13,15
+         LA    1,DYNPARM           LOAD ADDR OF THE DYNALLOC PARM LIST
+         BRAS  14,DYNRELOC         RELOCATE THE ADDRESS CONSTANTS
+         DYNALLOC ,                PERFORM THE DYNAMIC ALLOCATION
+         LTR   2,15                TEST THE RETURN CODE
+         JZ    DYNA0100            BR IF THE ALLOCATION WAS OK
+         ST    2,DYNRC             SAVE THE RETURN CODE
+         L     0,DYNPARM           LOADADDR OF THE SVC 99 RB
+         ST    0,DFS99RBP          STORE IT IN THE DAIRFAIL PARM LIST
+         LINK  SF=(E,CALLDF),MF=(E,DFPARMS)  USE DAIRFAIL TO PRINT    ->
+                                              THE ERROR MESSAGE
+         LTR   15,15               TEST THE RETURN CODE
+         JZ    DYNA0100            BR IF OK
+         DC    H'0'
+DYNA0100 LR    15,2                COPY THE SVC 99 RC TO REG 15
+         L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         RETURN (14,12),T,RC=(15)  RESTORE REGS & RETURN
+         SPACE 1
+         DROP  ,
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- Translate address offsets in a coded        *
+*   dynamic allocation parameter list to true addresses               *
+*                                                                     *
+* Status / Change Level --                                            *
+*           March 2012                                                *
+*    - Change comment.  The IEFZB4D2 macro name in a comment was      *
+*      incorrectly specified as IEFAB4D2.  The change level was not   *
+*      altered since the only change was in a comment and in this     *
+*      change log.                                                    *
+*    - Added comment about attributes.                                *
+*   V3L0 -- April 2010                                                *
+*                                                                     *
+* Example Calling Sequence --                                         *
+*   ----+----1----+----2----+----3----+----4----+----5----+----6      *
+*            LA    1,DYNPARMS                                         *
+*            BRAS  14,DYNRELOC                                        *
+*            ...                                                      *
+*   DYNPARMS DC    A(X'80000000'+(RB-DYNPARMS))                       *
+*   RB       DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0),2AL2(0)           *
+*            DC    A(TUP001-DYNPARMS)                                 *
+*            DC    2A(0)                                              *
+*   TUP001   DC    A(TU001-DYNPARMS)                                  *
+*            DC    A(TU002-DYNPARMS)                                  *
+*            DC    A(TU003-DYNPARMS)                                  *
+*            DC    A(X'800000000'+(TU004-DYNPARMS))                   *
+*   TU001    DC    AL2(DALDSNAM,1,L'DSN)                              *
+*   DSN      DC    C'SYS1.MACLIB'                                     *
+*   TU002    DC    AL2(DALSTATS,1,1),AL1(8)                           *
+*   TU003    DC    AL2(DALRTORG,1,2),AL2(0)                           *
+*   TU004    DC    AL2(DALRTDDN,1,8),CL8' '                           *
+*                                                                     *
+* Attributes -- DYNRELOC is reenterable, refreshable and reusable.    *
+*   It operates in TCB mode, in problem key and problem state.  It    *
+*   operates in AMODE 24 or 31 that is consistent with the location   *
+*   of the code, the register save area, and the dynamic allocation   *
+*   parameter list.  It uses no external operating system resources.  *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+DYNRELOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,DYNRELOC   SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY ADDRESS OF THE RB POINTER TO  ->
+                                    REG 2
+         L     3,0(,1)             LOAD OFFSET OF THE REQUEST BLOCK
+         ALR   3,2                 COMPUTE THE REQUEST BLOCK ADDRESS
+         ST    3,0(,1)             STORE THE REQUEST BLOCK ADDRESS
+         USING S99RB,3             ESTABLISH S99RB ADDRESSABILITY
+         L     4,S99TXTPP          LOAD OFFSET OF THE FIRST TEXT      ->
+                                    UNIT POINTER
+         ALR   4,2                 COMPUTE ADDRESS OF THE TEXT UNIT   ->
+                                    POINTER
+         ST    4,S99TXTPP          STORE ITS ADDRESS IN THE S99RB
+DYNR0100 L     15,0(,4)            LOAD OFFSET OF A TEXT UNIT POINTER
+         LR    14,15               COPY OFFSET TO REG 14
+         N     14,DYNR0300         REMOVE THE VL BIT
+         JZ    DYNR0200            BR IF NO POINTER IN THE POSITION
+         ALR   15,2                COMPUTE ADDRESS OF THE TEXT UNIT
+         ST    15,0(,4)            STORE TEXT UNIT ADDRESS IN THE     ->
+                                    TEXT UNIT POINTER
+DYNR0200 TM    0(4),X'80'          TEST IF LAST TEXT UNIT POINTER
+         LA    4,4(,4)             COMPUTE ADDRESS OF THE NEXT TEXT   ->
+                                    UNIT POINTER
+         JZ    DYNR0100            BR IF NOT THE LAST TEXT UNIT POINTER
+         RETURN (14,12),T          RESTORE REGISTERS & RETURN TO CALLER
+DYNR0300 DC    A(X'7FFFFFFF')      MASK TO REMOVE THE VL BIT
+         DROP  ,
+         EJECT
+* IKJPARS VALIDITY CHECK EXIT.  THIS EXIT ALLOCATES THE DATASETS AND
+* STORES ALLOCATED DATASETS IN A LIST THAT IS PROCESSED AFTER IKJPARS
+* RETURNS TO THE PROGRAM.  ANY DATASET THAT IS NOT A PDS IS RELEASED
+* IN THE EXIT.  ALL PDS DATASETS ARE RELEASED BY THE MAIN LINE.
+         SPACE 1
+         CNOP  0,8
+         ENTRY GETDSN
+         USING *,12                ESTABLISH GETDSN ADDRESSABILITY
+         USING PPL,11              ESTABLISH WORK AREA ADDRESSABILITY
+GETDSN   SAVE  (14,12),,'TSOLPDIR IKJPARS VALIDITY CHECK EXIT'
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         L     11,4(,1)            LOAD WORK AREA ADDRESS
+         LA    15,GETDSAVE         LOAD ADDR OF A NEW SAVE AREA
+         ST    13,4(,15)           ADD NEW SAVE AREA TO THE
+         ST    15,8(,13)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH NEW SAVE AREA POINTER
+         MVC   DYNPARM(AL),A       COPY DYNALLOC SKELETON TO WORK AREA
+         L     2,0(,1)             LOAD ADDR OF THE DATASET PDE
+         LH    1,4(,2)             LOAD LENGTH OF THE DATASET NAME
+         L     0,0(,2)             LOAD ADDR OF THE DATASET NAME
+         ICM   1,B'1000',=C' '     LOAD FILL CHARACTER
+         LA    14,ADSN-A+DYNPARM   LOAD ADDR OF DSN IN DYNALLOC AREA
+         LHI   15,L'ADSN           LOAD LENGTH OF DSN
+         MVCL  14,0                COPY DSN TO DYNALLOC PARMS
+         MVC   DSN,ADSN-A+DYNPARM  SAVE DSN IN WORK AREA
+         BRAS  14,DYNALLOC         ALLOCATE THE DATASET
+         LTR   15,15               TEST THE RC
+         JNZ   GETD0300            BR IF ERROR (DYNALLOC INFORMED USER)
+         MVC   DCBDDNAM-IHADCB+DIRDCB,ADDN-A+DYNPARM  COPY DDN TO DCB
+         MVC   VOL,AVOL-A+DYNPARM  SAVE THE VOLUME
+         LH    1,4(,2)             LOAD LENGTH OF THE DATASET NAME
+         SLL   1,24                COPY LENGTH TO THE HIGH ORDER BYTE
+         L     0,0(,2)             LOAD ADDR OF THE DATASET NAME
+         OR    1,0                 ADD LENGTH TO ADDRESS
+         ST    1,MTINSRTS          STORE DATASET NAME & LENGTH
+         ICM   0,B'0011',ADSORG-A+DYNPARM  LOAD THE DSORG
+         N     0,=AL1(0,0,255-DCBDSGU,255)  REMOVE UNMOVABLE ATTRIBUTE
+         C     0,=AL1(0,0,DCBDSGPO,0)  TEST IF DSORG = PO
+         JE    GETD0200            BR IF SO
+         MVC   MTMSGID,=C'MS01'    COPY MSGID TO IKJEFF02 PARMS
+*        LINK  SF=(E,CALLFF02),MF=(E,MTPARML)
+         L     15,FF02ADDR         CALL IKJEFF02 TO LET THE USER KNOW
+         CALL  (15),MF=(E,MTPARML) DSORG ¬= PO
+         LTR   15,15               TEST THE IKJEFF02 RC
+         JZ    GETD0100            BR IF OK
+         DC    H'0'                OOPS, MESSAGE DIDN'T WRITE
+GETD0100 MVC   DYNPARM(UL),U       COPY DYNALLOC SKELETON TO WORK AREA
+         MVC   UDDN-U+DYNPARM,DCBDDNAM-IHADCB+DIRDCB  COPY DDNAME
+         BRAS  14,DYNALLOC         FREE THE ALLOCATION
+         J     GETD0300
+GETD0200 LHI   0,ADDSIZE           LOAD THE SIZE OF AN ADD
+         GETMAIN RU,LV=(0),        ALLOCATE STORAGE FOR AN ADD        ->
+               LOC=(31,ANY)
+         XC    0(ADDSIZE,1),0(1)   CLEAR THE ADD
+         MVC   ADDNAME-ADD(,1),DCBDDNAM-IHADCB+DIRDCB  COPY THE DD NAME
+         MVC   ADDDSN-ADD(,1),DSN  COPY THE DATASET NAME
+         MVC   ADDVOL-ADD(,1),VOL  COPY THE VOLUME SERIAL
+         L     15,DDLIST+4         LOAD ADDR OF THE LAST ADD
+         ST    1,ADDNEXT-ADD(,15)  ADD THE MEW ADD TO THE ADD LIST
+         ST    1,DDLIST+4          UPDATE THE LAST ADD ADDRESS
+         SR    15,15               SET RC = 0
+         J     GETD0400
+GETD0300 LHI   15,8                SET RC = 8
+GETD0400 L     13,4(,13)           LOAD ADDR OF THE SAVE AREA
+         RETURN (14,12),T,RC=(15)  RESTORE REGS & RETURN TO IKJPARS
+         DROP   ,
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+CALLDF   LINK  SF=L,EP=IKJEFF18    LINK TO DAIRFAIL PARMLIST
+CALLPARS LINK  SF=L,EP=IKJPARS     LINK TO IKJPARS PARM LIST
+CALLSTACK LINK SF=L,EP=IKJSTCK     LINK TO TSO STACK SERVICE ROUTINE
+*CALLFF02 LINK SF=L,EP=IKJEFF02    LINK TO IKJEFF02 PARM LIST
+MASTOPEN OPEN  (*-*,INPUT),MF=L    MASTER OPEN PARM LIST
+MASTCLOS CLOSE *-*,MF=L            MASTER CLOSE PARM LIST
+IKJEFF02 DC    CL8'IKJEFF02'
+MASTDCB  DCB   DSORG=PS,MACRF=GL,DDNAME=FILLMEIN,EODAD=*-*,    MASTER ->
+               RECFM=F,LRECL=256,BLKSIZE=256                    DCB
+LRECL    DC    AL2(78+4)
+         DC    0D'0'
+HEXTAB   EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+TESTPACK DC    0XL256'0',10X'00000000000000000000040404040404'
+         DC     6X'04040404040404040404040404040404'
+         LTORG ,
+LTIME    DC   0C' HH:MM:SS',C'0',X'2120',C':',X'2020',C':',X'2020'
+         POP   PRINT
+         DC    0A(0)
+* DYNAMIC ALLOCATION PARAMETER LISTS.  THESE PARAMETER LISTS ARE
+* COPIED TO A WORK AREA, VARIABLE DATA FILLED IN, THE ADDRESS CONSTANT
+* OFFSETS ARE RELOCATED, AND DYNAMIC ALLOCATION IS CALLED
+A        DC    A(X'80000000'+ARB-A)
+ARB      DC    AL1(S99RBEND-S99RB,S99VRBAL)
+         DC    AL1(S99NOMNT+S99NOCNV+S99NOMIG,0)
+         DC    2AL2(0)
+         DC    A(ATXTPP-A,0,0)
+ATXTPP   DC    A(ATXT01-A,ATXT02-A,ATXT03-A,ATXT04-A)
+         DC    A(X'80000000'+ATXT05-A)
+ATXT01   DC    AL2(DALDSNAM,1,L'ADSN)  DATASET NAME
+ADSN     DC    CL44' '
+ATXT02   DC    AL2(DALRTDDN,1,L'ADDN)  ALLOCATED DDNAME RETURNED HERE
+ADDN     DC    CL8' '
+ATXT03   DC    AL2(DALRTORG,1,L'ADSORG)  ALLOCATED DSORG RETURNED HERE
+ADSORG   DC    AL2(0)
+ATXT05   DC    AL2(DALRTVOL,1,L'AVOL)  ALLOCATED VOLUME RETURNED HERE
+AVOL     DC    CL6' '
+ATXT04   DC    AL2(DALSTATS,1,1),X'08' DISP=SHR
+AL       EQU   *-A
+         SPACE 5
+U        DC    A(X'80000000'+URB-U)
+URB      DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0)
+         DC    2AL2(0)
+         DC    A(UTXTPP-U,0,0)
+UTXTPP   DC    A(X'80000000'+UTXT01-U)
+UTXT01   DC    AL2(DUNDDNAM,1,L'UDDN)  DDNAME
+UDDN     DC    CL8' '
+UL       EQU   *-U
+MONTABD  DC    0H'0'
+         DC    AL2(0)                                 JAN
+         DC    AL2(31)                                FEB
+         DC    AL2(31+29)                             MAR
+         DC    AL2(31+29+31)                          APR
+         DC    AL2(31+29+31+30)                       MAY
+         DC    AL2(31+29+31+30+31)                    JUN
+         DC    AL2(31+29+31+30+31+30)                 JUL
+         DC    AL2(31+29+31+30+31+30+31)              AUG
+         DC    AL2(31+29+31+30+31+30+31+31)           SEP
+         DC    AL2(31+29+31+30+31+30+31+31+30)        OCT
+         DC    AL2(31+29+31+30+31+30+31+31+30+31)     NOV
+         DC    AL2(31+29+31+30+31+30+31+31+30+31+30)  DEC
+MONNAME  DC    C'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'
+MONTAB   DC    32AL1(0),29AL1(1),31AL1(2),30AL1(3),31AL1(4),30AL1(5),31>
+               AL1(6),31AL1(7),30AL1(8),31AL1(9),30AL1(10),31AL1(11)
+         DC    0D'0'
+         SPACE 5
+LPDIRMSG CSECT                     IKJEFF02 MESSAGE SKELETONS
+LPDIRMSG RMODE ANY
+         IKJTSMSG ('LPDIR001A ',,' IS NOT PARTITIONED!'),MS01
+         IKJTSMSG ('LPDIR002I ',,' ON ',),MS02
+         IKJTSMSG (,' '),MS03
+         IKJTSMSG ('LPDIR004I ',,' ALLOCATED DIRECTORY BLOCKS, ',,' USE>
+               D DIRECTORY BLOCKS',),MS04
+         IKJTSMSG ('-MEMBER- --TTRC-- --USER DATA (TTRC AND USER DATA A>
+               RE HEX)'),HDR1
+         IKJTSMSG ('-MEMBER- --TTRC-- VV MM -IDATE- -IRECS- -MDATE- -MT>
+               IME--  -RECS- -USER-'),HDR2
+         IKJTSMSG ('-MEMBER- --TTRC-- ALIAS OF -SIZE- -----ATTRIBUTES-->
+               --- AM  RM  AC SSI'),HDR3
+         IKJTSMSG ('LPDIR005I TSOLPDIR VERSION 1 LEVEL 7 ASSEMBLED ON &>
+               SYSDATE AT &SYSTIME'),MS05
+         IKJTSMSG ,
+         DC    0D'0'
+         END   TSOLPDIR

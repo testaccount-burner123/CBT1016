@@ -1,0 +1,542 @@
+FREESYS  TITLE '                        F r e e   S Y S n n n n n   D D>
+                   S t a t e m e n t s'
+         MACRO
+&NAME    SETRC &ADDR,&RC
+         LCLC  &R
+         AIF   ('&RC'(1,1) EQ '('  ).RFORM
+&NAME    CLI   &ADDR,&RC           Compare existing code with         ->
+                                    proposed code
+         JH    *+L'*+4             Br if existing code > proposed code
+         MVI   &ADDR,&RC           Store new code
+         MEXIT
+.RFORM   ANOP
+&R       SETC  '&RC(1)'
+&NAME    CLM   &R,B'0001',&ADDR    Compare proposed code with         ->
+                                    existing code
+         JNH   *+L'*+4             Br if proposed code <= existing code
+         STC   &R,&ADDR            Replace existing code with new code
+         MEND
+FREESYS  RSECT                     Establish program CSECT
+FREESYS  AMODE ANY                 Establish program AMODE
+FREESYS  RMODE ANY                 Establish program RMODE
+         PUSH  PRINT
+         PRINT NOGEN
+         CVT   DSECT=YES           Define the CVT data area
+         IKJTCB ,                  Define the TCB data area
+TIOT     DSECT                     Define the start of the TIOT
+         IEFTIOT1 ,                Define the TIOT data area
+         IEFZB4D0 ,                Define dynamic allocation data areas
+         IEFZB4D2 ,                Define dynamic allocation keys
+         IEZDEB ,
+         DCBD  DSORG=XE,DEVD=DA
+         POP   PRINT
+WORKAREA DSECT                     Define dynamically allocated work  ->
+                                    area
+SAVEAREA DC    9D'0'               Standard OS/360 save area
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJEFFMT MTDSECT=NO,MTFORMAT=NEW  Parmlist and parm data for ->
+                                            IKJEFF02
+CPHANDLE DC    A(*-*)              Cell pool handle
+DDLIST   DC    A(*-*)              List of DD statements to free
+         DC    0D'0'
+         IKJEFFDF DFDSECT=NO,DFDSEC2=YES PARMLIST AND OUTPUT AREA FOR ->
+                                          "DAIRFAIL"
+         POP   PRINT
+WORKAREA  DSECT                    Return to work area DSECT
+RC       DC    AL1(0)              Return code
+SWITCH   DC    AL1(0),0D'0'
+TSO      EQU   X'80'               FREESYS running as a TSO command
+DYNRC    DC    F'0'                Dynamic allocation return code
+ECB      DC    F'0'                ECB for IKJEFF02
+APARM    DS    XL256,0D
+WALEN    EQU   *-WORKAREA
+FREESYS  RSECT                     Return to the program CSECT
+         USING *,12                Establish program addressability
+         USING WORKAREA,11         Define work area addressability
+         SAVE  (14,12),,FREESYS-&SYSDATE-&SYSTIME  Save registers
+         LR    12,15               Copy entry point address to reg 12
+         LR    2,1                 Copy CPPL address to reg 2
+         LHI   5,WALEN             Load the length of the work area
+         GETMAIN RU,LV=(5),LOC=(31,ANY)  Allocate storage for the     ->
+                                          work area
+         LR    11,1                Copy the work area address to reg 11
+         LR    4,1                 Copy the work area address to reg 4
+         SR    15,15               Set reg 15 = 0
+         MVCL  4,14                Clear the work area
+         LA    15,SAVEAREA         Load address of a new save area
+         ST    15,8(,13)           Add new save area to the
+         ST    13,4(,15)            save area chain
+         LR    13,15               Establish new save area pointer
+         L     3,0(,2)             Load the CPPL into regs 2 through 5
+         LTR   3,3                 Test if batch interface
+         JM    BATCH               Br if batch
+         OI    SWITCH,TSO          Set TSO switch
+         ST    2,DFCPPLP           Store the CPPL address for DAIRFAIL
+         ST    2,MTCPPLP           Store the CPPL address for IKJEFF02
+         LA    0,ECB               Load address of an ECB for IKJEFF02
+         ST    0,MTECBP            Store the address for IKJEFF02
+         LA    0,MTCSECTP          Load address of the parameter data
+         ST    0,MTPLPTR            and save it for IKJEFF02
+         LA    0,MSGS              Load addr of the message skeletons
+         ST    0,MTCSECTP          Store the address for IKJEFF02
+         MVI   MTSW1,MTPUTLSW      Indicate IKJEFF02 is to use        ->
+                                    PUTLINE to write its messages
+         MVI   MTSW2,MTFMT         Indicate "new" format parm list
+         LA    0,L'UDDNAME         Load the length of the DD name
+         ST    0,MTINSRTS          Store the length
+         LA    0,UDDNAME-U+APARM   Load address of the DD name
+         ST    0,MTINSRTS+4        Store the address for IKJEFF02
+         MVC   MTMSGID,=C'MS01'    Store the message ID
+         LA    0,DYNRC             Load address of the return code area
+         ST    0,DFRCP             Save it for DAIRFAIL
+         LA    0,=AL1(0,DFSVC99)   Load address of DAIRFAIL switches
+         ST    0,DFIDP             Store switch address for DAIRFAIL
+         LA    0,=A(0)             Load address of IKJEFF02 pointer
+         ST    0,DFJEFF02          Save address for DAIRFAIL
+* Scan through the TIOT looking for SYSnnnnn DD names.  Save the DD
+* names we want to free in a linked list.  We do it this way because
+* freeing a DD entry alters the TIOT, and it may impact the scan.
+BATCH    L     2,CVTPTR            Load address of the CVT
+         L     2,CVTTCBP-CVTMAP(,2)  Load address of the TCB pointers
+         L     15,4(,2)            Load address of the current TCB
+         L     3,TCBTIO-TCB(,15)   Load address of the TIOT
+         USING TIOT,3              Establish TIOT addressability
+         LA    3,TIOENTRY          Load address of the first TIOT DD  ->
+                                    entry
+* We treat the TIOT DD entries as a separate entity from the TIOT base.
+* It may be possible to regard reg 3 as a "virtual" start, but that
+* seems to be just as confusing as what we're doing.
+         USING TIOENTRY,3        Establish TIOT DD entry addressability
+NEXTDD   TM    TIOESTTA,TIOSLTYP   Test if entry has been freed
+         JO    NOTSYS              Ignore it if so
+         CLC   =C'SYS',TIOEDDNM    Test if DD name we want to free
+         JNE   NOTSYS              Br if not
+         TRT   TIOEDDNM+3(5),TESTNUM  Test if SYSnnnnn (where nnnnn   ->
+                                       is numeric
+         JNZ   NOTSYS              Br if not
+         SR    2,2                 Set reg 2 = 0
+         ICM   2,B'0001',TIOELNGH  Load the length of this DD entry   ->
+                                    into reg 2
+         JZ    NOTCONCAT           Br if this iS the end of the TIOT
+         AR    2,3                 Compute the address of the next DD ->
+                                    entry
+         CLI   TIOEDDNM-TIOENTRY(2),C' '  Is the next DD name blank?
+         JE    NOTSYS                      Yes, the DD is a           ->
+                                            concatenation, so don't   ->
+                                             attempt to free it
+NOTCONCAT LR   0,3                 Compute offset of the DD entry
+         L     14,CVTPTR           Load address of the CVT
+         L     14,CVTTCBP-CVTMAP(,14) Load address of the TCB pointers
+         L     14,4(,14)           Load address of the current TCB
+         S     0,TCBTIO-TCB(,14)   Compute offset of the TIOENTRY in  ->
+                                    the TIOT
+         L     14,TCBJSTCB-TCB(,14)  Load address of the job step TCB
+NEXTTCB  LA    1,(TCBDEB-TCB)-(DEBDEBAD-DEBBASIC)(,14)  Compute address>
+                                                        of a pseudo DEB
+NEXTDEB  ICM   1,B'0111',DEBDEBB-DEBBASIC(1)  Load address of the next >
+                                               DEB
+         JZ    BUMPTCB             Quit if no more DEBs
+         SR    4,4
+         ICM   4,B'0111',DEBDCBB-DEBBASIC(1)  Load address of the DCB
+         JZ    NEXTDEB
+         CH    0,DCBTIOT-IHADCB(,4)  Is it this DD?
+         JNE   NEXTDEB             No
+         J     NOTSYS              DD is open, so skip it
+BUMPTCB  ICM   14,B'1111',TCBTCB-TCB(14)  Load address of the next TCB
+         JNZ   NEXTTCB             Br if not end of the TCBs
+* Allocate storage for a DD entry, and add it to the chain of DD names
+* we are going to free.
+GETDD    LHI   0,16                Load length to allocate
+         LA    1,CPHANDLE          Load address of the cell pool handle
+         BRAS  14,GETMAIN          Allocate storage in the cell pool
+         MVC   0(4,1),DDLIST       Add the new entry to the list of
+         ST    1,DDLIST             DD names to free
+         MVC   4(8,1),TIOEDDNM     Copy the DD name to the new list   ->
+                                    entry
+* Compute the start of the next DD entry
+NOTSYS   SR    0,0                 Set reg 0 = 0
+         ICM   0,B'0001',TIOELNGH  Load the length of this TIOT DD    ->
+                                    entry
+         JZ    FREELIST            Br if end of the TIOT
+         AR    3,0                 Compute the address of the next    ->
+                                    TIOT DD entry
+         J     NEXTDD              Go process the next TIOT DD entry
+* Now free the DD names we found
+FREELIST ICM   2,B'1111',DDLIST    Load addr of the next DD name
+         JZ    DONE                Br if no more entries
+         MVC   DDLIST,0(2)         Remove the entry from the list
+         MVC   APARM(UL),U         Copy the master copy of the        ->
+                                    DYNALLOC data to the work area
+         MVC   UDDNAME-U+APARM,4(2)  Copy the DD name to the dynamic  ->
+                                      allocation parm list
+         LA    1,APARM             Load address of the pointer to     ->
+                                    the dynamic allocation parm list
+         BRAS  14,DYNRELOC         Relocate the address constants
+         DYNALLOC ,                Attempt to free the allocation
+         SETRC RC,(15)             Set the return code
+         TM    SWITCH,TSO          Test if TSO
+         JZ    FREELIST            Br if not
+         LTR   15,15               Test the return code
+         JZ    PUTMSG              Br if OK
+         ST    15,DYNRC            Save the return code
+         LA    0,URB-U+APARM       Load the actual request block addr
+         ST    0,DFS99RBP          Save RB address for DAIRFAIL
+         LINK  SF=(E,CALLDF),MF=(E,DFPARMS)  Use DAIRFAIL to write a  ->
+                                              TSO message
+CHKDF    NOPR  0
+         J     FREELIST            Go free the next DD
+PUTMSG   LINK  SF=(E,CALLFF02),MF=(E,MTPARML)  Use IKJEFF02 to write  ->
+                                                a message
+CHKFF02  NOPR  0
+         J     FREELIST            Go free the next DD
+DONE     LA    1,CPHANDLE          Load address of the cell pool handle
+         BRAS  14,FREEALL          Free the cell pool
+         L     13,4(,13)           Load address of the previous save  ->
+                                    area
+         SR    10,10               Set reg 10 = 0
+         IC    10,RC               Load the return code
+         LHI   0,WALEN             Load the work area length
+         FREEMAIN RU,LV=(0),A=(11) Free the work area
+         LR    15,10               Copy the return code to reg 15
+         RETURN (14,12),T,RC=(15)  Restore regs & return
+CALLDF   LINK  SF=L,EP=IKJEFF18    Link parm list to call "DAIRFAIL"
+CALLFF02 LINK  SF=L,EP=IKJEFF02    Link parm list to call IKJEFF02
+U        DC    A(X'80000000'+(URB-U))  Dynamic allocation parm list
+URB      DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0)  Dynamic
+         DC    2AL2(0)                            allocation
+         DC    A(UTXTPP-U,0,0)                     request block
+UTXTPP   DC    A(UTXT01-U,X'80000000'+(UTXT02-U))  Dynamic allocation ->
+                                                    text unit pointers
+UTXT01   DC    AL2(DUNUNALC,0)     Free a permanently allocated DD
+UTXT02   DC    AL2(DUNDDNAM,1,L'UDDNAME)  DD name text unit
+UDDNAME  DC    CL8' '              DD name text
+UL       EQU   *-U                 Length of the dynamic allocation   ->
+                                    skeleton
+         DC    0D'0'
+TESTNUM  DC    0XL256'0',(C'0')X'04',10X'00',(256-(*-TESTNUM))X'04'
+         LTORG ,                   Define the literal pool
+MSGS     DC    0D'0'
+         IKJTSMSG ('FRS001I File ',,' unallocated'),MS01
+         IKJTSMSG ,                End of message skeletons
+         DC    0D'0'
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- Translate address offsets in a coded        *
+*   dynamic allocation parameter list to true addresses               *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V3L0 -- April 2010                                                *
+*                                                                     *
+* Example Calling Sequence --                                         *
+*   ----+----1----+----2----+----3----+----4----+----5----+----6      *
+*            LA    1,DYNPARMS                                         *
+*            BRAS  14,DYNRELOC                                        *
+*            ...                                                      *
+*   DYNPARMS DC    A(X'80000000'+(RB-DYNPARMS))                       *
+*   RB       DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0),2AL2(0)           *
+*            DC    A(TUP001-DYNPARMS)                                 *
+*            DC    2A(0)                                              *
+*   TUP001   DC    A(TU001-DYNPARMS)                                  *
+*            DC    A(TU002-DYNPARMS)                                  *
+*            DC    A(TU003-DYNPARMS)                                  *
+*            DC    A(X'800000000'+(TU004-DYNPARMS))                   *
+*   TU001    DC    AL2(DALDSNAM,1,L'DSN)                              *
+*   DSN      DC    C'SYS1.MACLIB'                                     *
+*   TU002    DC    AL2(DALSTATS,1,1),AL1(8)                           *
+*   TU003    DC    AL2(DALRTORG,1,2),AL2(0)                           *
+*   TU004    DC    AL2(DALRTDDN,1,8),CL8' '                           *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+         PUSH  USING
+         DROP  ,                   KILL ANY CURRENT USING
+DYNRELOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,DYNRELOC   SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY ADDRESS OF THE RB POINTER TO  ->
+                                    REG 2
+         L     3,0(,1)             LOAD OFFSET OF THE REQUEST BLOCK
+         ALR   3,2                 COMPUTE THE REQUEST BLOCK ADDRESS
+         ST    3,0(,1)             STORE THE REQUEST BLOCK ADDRESS
+         USING S99RB,3             ESTABLISH S99RB ADDRESSABILITY
+         L     4,S99TXTPP          LOAD OFFSET OF THE FIRST TEXT      ->
+                                    UNIT POINTER
+         ALR   4,2                 COMPUTE ADDRESS OF THE TEXT UNIT   ->
+                                    POINTER
+         ST    4,S99TXTPP          STORE ITS ADDRESS IN THE S99RB
+DYNR0100 L     15,0(,4)            LOAD OFFSET OF A TEXT UNIT POINTER
+         LR    14,15               COPY OFFSET TO REG 14
+         N     14,DYNR0300         REMOVE THE VL BIT
+         JZ    DYNR0200            BR IF NO POINTER IN THE POSITION
+         ALR   15,2                COMPUTE ADDRESS OF THE TEXT UNIT
+         ST    15,0(,4)            STORE TEXT UNIT ADDRESS IN THE     ->
+                                    TEXT UNIT POINTER
+DYNR0200 TM    0(4),X'80'          TEST IF LAST TEXT UNIT POINTER
+         LA    4,4(,4)             COMPUTE ADDRESS OF THE NEXT TEXT   ->
+                                    UNIT POINTER
+         JZ    DYNR0100            BR IF NOT THE LAST TEXT UNIT POINTER
+         RETURN (14,12),T          RESTORE REGISTERS & RETURN TO CALLER
+DYNR0300 DC    A(X'7FFFFFFF')      MASK TO REMOVE THE VL BIT
+         DC    0D'0'
+         POP   USING               RESTORE PREVIOUS USING
+*        IEFZB4D0 ,
+*        IEFAB4D2 ,
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- CELLPOOL                                                   *
+*                                                                     *
+* Function / Operation -- CELLPOOL provides three services.  The      *
+*   GETMAIN service allocates storage, the FREEALL service frees all  *
+*   of the storage allocated by the GETMAIN service, and the CPSTATS  *
+*   service obtains selected statistics about the cell pools.  These  *
+*   services, not to be considered an alias of the MVS cell pool      *
+*   service, are intended to be used by programs that allocate large  *
+*   numbers of small amounts of storage that are not commonly freed.  *
+*   CELLPOOL obtains storage from MVS in 4K blocks and sub allocates  *
+*   storage from these blocks.  Unlike the MVS CPOOL service, these   *
+*   services do not required fixed length small blocks, and there is  *
+*   no mechanism to explicitely free a block of storage.  This code   *
+*   is intended to be inserted directly into the program using the    *
+*   service; it is small, though it can be placed outside of the      *
+*   addressable storage area of the program using the service.        *
+*                                                                     *
+* Usage suggestions -- The GETMAIN service is optimized for an        *
+*   environment where most (if not all) storage requests are          *
+*   resolved in the most recently allocated CPOOL.  GETMAIN does not  *
+*   perform a "best fit" scheme where the storage request is resolved *
+*   in the CPOOL with the smallest free space that is larger than or  *
+*   equal to the requested storage.  If the storage cannot be         *
+*   allocated in the most recently allocated CPOOL, GETMAIN searches  *
+*   the remaining CPOOLs.  It will allocate storage from the first    *
+*   CPOOL with enough free space to resolve the request.  GETMAIN     *
+*   will allocate a new CPOOL only if it cannot find a CPOOL with     *
+*   enough free space to resolve the storage request.                 *
+*                                                                     *
+* Allocated storage Residency --                                      *
+*   The GETMAIN macro in GETPOOL does not specify the LOC parameter   *
+*   so the storage it allocates is located below the 16 meg line if   *
+*   this code is located below the 16 meg line, and it may be         *
+*   allocated above the 16-meg line if this code is located above the *
+*   16 meg line.  A possible modification is shown as comments to     *
+*   use the actual AMODE to allocate storage above the line if the    *
+*   code is run AMODE 31.  This code was not used in the final        *
+*   version because of possible problems when the AMODE could change  *
+*   betwwen calls.  If it is known the actual AMODE when using        *
+*   cellpool services will always be AMODE 31, the actual GETMAIN     *
+*   macro can be changed to LOC=(ANY,ANY) or LOC=(31,ANY) (the        *
+*   preferred solution for z/OS systems).                             *
+*                                                                     *
+* Messages --                                                         *
+*  These message are issued using WTO.                                *
+*  CPS0001E - THE INITIAL HANDLE FOR CELL POOL SERVICES IS INVALID    *
+*    Reason - The contents of register 1 when GETMAIN is called do    *
+*        not point to a word of storage that is valid.                *
+*    Action - The task is terminated with an S0C1 ABEND.              *
+*    Response - Obtain a storage dump.  The register 1 area in the    *
+*        OS/360 save area contains the conents of register 1 when     *
+*        GETMAIN was called.  This data area may contain binary 0s,   *
+*        which is valid, or it must point to a storage area that      *
+*        contains the GPOOL "eye catcher" text.  Go to your program   *
+*        and verify it is calling GETMAIN correctly.  The FREEALL     *
+*        service may have detected an error while releasing cell      *
+*        pools; this will leave the handle in an indeterminate state, *
+*        and cause this error if the handle is used to create a new   *
+*        cell pool.                                                   *
+*  CPS0002E - THE CHAIN OF CELL POOL CONTAINERS IS INVALID            *
+*    Reason - Self explanatory.                                       *
+*    Action - The task is terminated with an S0C1 ABEND.              *
+*    Response - Something appears to have damaged storage.  Examine   *
+*        the contents of storage in detail.                           *
+*                                                                     *
+* Calling Sequence --                                                 *
+*            L     0,storage-amount                                   *
+*            LA    1,GMHANDLE                                         *
+*            BRAS  14,GETMAIN                                         *
+*                                                                     *
+*            LA    1,GMHANDLE                                         *
+*            BRAS  14,FREEALL                                         *
+*                                                                     *
+*            LA    0,RESULTS                                          *
+*            LA    1,GMHANDLE                                         *
+*            BRAS  14,CPSTATS                                         *
+*                                                                     *
+*   GMHANDLE DC    A(*-*)                                             *
+*   RESULTS  DC    (CPSWORDS)F'0'      THE CONTENTS OF THIS DATA AREA *
+*   *                                   ARE MAPPED BY THE CPSTAT      *
+*   *                                    DSECT                        *
+*                                                                     *
+* Attributes -- These routines are reenterable, refreshable and       *
+*   reusable.  They are intended to operate in TCB mode, in           *
+*   problem state and problem key, AMODE ANY and an RMODE that is     *
+*   compatible with AMODE.  Register 13 must point to a standard      *
+*   72 byte OS/360 save area.  Registers 2 through 13 are restored    *
+*   to their contents before GETMAIN and FREEALL are entered.  These  *
+*   routines are not intended to operate AMODE 64.                    *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+         SPACE 1
+GETMAIN  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         USING CPOOL,11            ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,GETMAIN    SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,0                 COPY AMOUNT OF STORAGE TO REG 2
+         LR    10,1                COPY ADDRESS OF THE CELL POOL      ->
+                                    HEADER WORD TO REG 10
+         AHI   2,7                 ROUND REQUEST UP TO AN 8 BYTE
+         N     2,=F'-8'             MULTIPLE
+         ICM   11,B'1111',0(10)    LOAD ADDRESS OF THE FIRST CELL     ->
+                                    POOL
+         JNZ   GM0300              BR IF PRESENT
+         LHI   0,CPAMT-(CPSTART-CPOOL)  LOAD MINIMUM CPOOL SIZE
+GM0100   CR    0,2                 COMPARE WITH INITIAL REQUEST
+         JNL   GM0200              BR IF IT WILL FIT
+         AHI   0,CPAMT             UPDATE
+         J     GM0100              CONTINUE
+GM0200   AHI   0,CPSTART-CPOOL     RESET AMOUNT
+         BRAS  9,GETPOOL           GET THE INITIAL CPOOL
+GM0300   CLC   =CL8'GPOOL',CPID    VERIFY IT'S A CELL POOL
+         JE    GM0400              BR IF OK
+         WTO   'CPS0001E - THE INITIAL HANDLE FOR CELL POOL SERVICES IS>
+                INVALID',ROUTCDE=11,DESC=7
+         DC    H'0'                THROW AN S0C1 IF ERROR
+GM0400   LR    11,10               LOAD ADDRESS OF A DUMMY CPOOL
+         AHI   11,-(CPNEXT-CPOOL)  SUBTRACT OFFSET OF CTNEXT
+GM0500   ICM   11,B'1111',CPNEXT   LOAD ADDR OF THE NEXT CPOOL
+         JZ    GM0700              BR IF END OF LIST
+         CLC   =CL8'GPOOL',CPID    VERIFY IT'S OK
+         JE    GM0600              BR IF OK
+         WTO   'CPS0002E - THE CHAIN OF CELL POOL CONTAINERS IS INVALID>
+               ',ROUTCDE=11,DESC=7
+         DC    H'0'                THROW AN S0C1 IF ERROR
+GM0600   C     2,CPLEFT            COMPARE REQUESTED AMOUNT WITH      ->
+                                    FREE STORAGE IN THIS CPOOL
+         JH    GM0500              BR IF NOT ENOUGH STORAGE IN THIS   ->
+                                    CPOOL
+         MVC   24(4,13),CPNEXTA    REPLACE CALLER'S REG 1 W/ CURRENT  ->
+                                    FREE SPACE ADDRESS IN THIS CPOOL
+         L     0,CPLEFT            LOAD FREE BYTES IN THIS CPOOL
+         SR    0,2                 SUBTRACT AMOUNT OF STORAGE WE      ->
+                                    JUST ALLOCATED
+         ST    0,CPLEFT            UPDATE FREE SPACE AMOUNT
+         A     2,CPNEXTA           ADD ADDRESS OF STORAGE WE JUST     ->
+                                    ALLOCATED TO AMOUNT OF STORAGE    ->
+                                     WE JUST ALLOCATED
+         ST    2,CPNEXTA           UPDATE ADDRESS OF FREE STORAGE
+         J     GM1000              AND EXIT
+GM0700   LHI   0,CPAMT-(CPSTART-CPOOL)  SET REG 0 = FREE STORAGE IN A ->
+                                         SINGLE CPOOL
+GM0800   CR    0,2                 COMPARE W/ AMOUNT WE NEED
+         JNL   GM0900              BR IF ENOUGH
+         AHI   0,CPAMT             ADD CPAMT TO REG 0
+         J     GM0800              CONTINUE
+GM0900   AHI   0,CPSTART-CPOOL     SET REG 0 TO A 4K MULTIPLE
+         BRAS  9,GETPOOL           ALLOCATE A NEW CPOOL
+         J     GM0400              AND RESTART ALLOCATION
+GM1000   RETURN (14,12),T          RESTORE REGS & RETURN
+         SPACE 5
+         CNOP  0,8
+GETPOOL  LR    8,0                 COPY STORAGE REQUEST TO REG 8
+*        LTR   9,9                 TEST THE AMODE
+*        JM    GM2100              BR IF AMODE 31
+         GETMAIN RU,LV=(0)         ALLOCATE A NEW CONTAINER
+*        J     GM2200              BR TO COMMON CODE
+*GM2100  GETMAIN RU,LV=(0),LOC=(ANY,ANY)  ALLOCATE STORAGE ABOVE THE  ->
+                                           THE 16-MEG LINE
+*GM2200  DC    0H'0'               REJOIN
+         LR    11,1                COPY NEW CONTAINER ADDRESS TO REG 11
+         ST    8,CPSIZE            STORE IT
+         MVC   CPID,=CL8'GPOOL'    ADD MY EYECATCHER
+         AHI   8,-(CPSTART-CPOOL)  SUBTRACT SIZE OF THE HEADER
+         ST    8,CPLEFT            STORE AMOUNT OF FREE SPACE
+         LA    0,CPSTART           GET START OF FREE STORAGE
+         ST    0,CPNEXTA           SAVE IT IN THE CELL POOL
+         MVC   CPNEXT,0(10)        ADD THE NEW CELL POOL TO THE
+         ST    11,0(,10)            CELL POOL CHAIN
+         BR    9                   RETURN
+         EJECT
+         CNOP  0,8
+FREEALL  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,FREEALL    SAVE REGISTERS
+         LR    12,15               COPY THE ENTRY POINT ADDR TO REG 12
+         LR    10,1                COPY THE HEADER ADDRESS TO REG 10
+FR0100   ICM   11,B'1111',0(10)    LOAD ADDR OF THE NEXT CPOOL
+         JZ    FR0200              EXIT IF DONE
+         CLC   =CL8'GPOOL',CPID    TEST EYECATCHER
+         JNE   FR0200              EXIT IF ERROR
+         MVC   0(4,10),CPNEXT      REMOVE CURRENT CPOOL FROM THE CHAIN
+         L     0,CPSIZE            LOAD SIZE
+         FREEMAIN RU,LV=(0),A=(11) FREE THE CPOOL
+         J     FR0100              GO FREE THE NEXT CPOOL
+FR0200   RETURN (14,12),T          RESTORE REGS & RETURN
+         DROP  12                  KILL ADDRESSABILITY
+         EJECT
+CPSTATS  BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,15                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,CPSTATS
+         LR    9,0                 COPY ADDRESS OF RESULT AREA TO REG 9
+         LM    2,2+CPSWORDS-1,CPSINIT  CLEAR TOTALING REGS
+         ICM   11,B'1111',0(1)     LOAD ADDRESS OF THE FIRST CPOOL
+         JZ    CPS0400             EXIT IF NO CELL POOLS
+CPS0100  CLC   CPID,=CL8'GPOOL'    VERIFY CPOOL IS VALID
+         JE    CPS0200             BR IF SO
+         ICM   2+(CPSFLAGS-CPSTAT)/4,B'1000',=AL1(CPSERROR)  LOAD     ->
+                                                             ERROR FLAG
+         J     CPS0500             AND EXIT
+CPS0200  AHI   2+(CPSXTNTS-CPSTAT)/4,1  ADD 1 TO EXTENT COUNT
+         C     2+(CPSLARGE-CPSTAT)/4,CPSIZE  COMPARE LARGEST EXTENT   ->
+                                              SIZE WE'VE FOUND SO FAR ->
+                                               WITH SIZE OF THIS EXTENT
+         JNL   CPS0300             BR IF THIS EXTENT IS SMALLER THAN  ->
+                                    THE LARGEST EXTENT
+         L     2+(CPSLARGE-CPSTAT)/4,CPSIZE  UPDATE LARGEST EXTENT    ->
+                                              SIZE
+CPS0300  A     2+(CPSFREE-CPSTAT)/4,CPLEFT   UPDATE TOTAL FREE SPACE
+         C     2+(CPSLFREE-CPSTAT)/4,CPLEFT   COMPARE LARGET FREE     ->
+                                               SPACE EXTENT WE'VE     ->
+                                                FOUND SO FAR WITH     ->
+                                                 CURRENT FREE SPACE
+         JNL   CPS0400             BR IF FREE SPACE IN THIS EXTENT    ->
+                                    IS LESS THAN LARGEST FREE SPACE
+         L     2+(CPSLFREE-CPSTAT)/4,CPLEFT  UPDATE LARGEST FREE AREA
+CPS0400  ICM   11,B'1111',CPNEXT   LOAD ADDRESS OF THE NEXT CPOOL
+         JNZ   CPS0100             GO CHECK THE NEXT EXTENT IF IT     ->
+                                    PRESENT
+CPS0500  STM   2,2+CPSWORDS-1,0(9) STORE RESULTS
+         RETURN (14,12),T          RESTORE REGS & RETURN
+         DC    0F'0'               FORCE FULLWORD ALIGNMENT
+CPSINIT  DC    (CPSWORDS)F'0'      REGISTER INITIALIZATION AREA
+         DC    0D'0'
+         LTORG ,                   DEFINE A LITERAL POOL FOR GETMAIN  ->
+                                    AND FREEALL
+         DC    0D'0'
+CPOOL    DSECT                     CELL POOL CONTAINER
+CPID     DC    CL8'GPOOL'          CELL POOL EYECATCHER
+CPNEXT   DS    A                   ADDRESS OF THE NEXT CONTAINER
+CPSIZE   DS    F                   BYTES ALLOCATED FOR THIS CONTAINER
+CPLEFT   DS    F                   FREE BYTES LEFT IN THIS CONTAINER
+CPNEXTA  DS    A,0D                ADDRESS OF FIRST FREE BYTE
+CPSTART  EQU   *                   START OF USER DATA AREA
+CPAMT    EQU   4*1024              MINIMUM BYTES IN A SINGLE          ->
+                                    CELL POOL CONTAINER
+CPSTAT   DSECT
+CPSXTNTS DS    F                   NUMBER OF CELL POOL EXTENTS
+CPSLARGE DS    F                   LARGEST CELL POOL EXTENT
+CPSFREE  DS    F                   TOTAL FREE SPACE IN ALL CELL POOL  ->
+                                    EXTENTS
+CPSLFREE DS    F                   LARGEST FREE SPACE IN ALL CELL     ->
+                                    EXTENTS
+CPSFLAGS DS    AL1,0F              FLAGS
+CPSERROR EQU   X'80'               BAD CELL POOL CHAIN
+CPSWORDS EQU   (*-CPSTAT)/4        NUMBER OF WORDS IN THE CPSTAT ARRAY
+         END   FREESYS

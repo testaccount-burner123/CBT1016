@@ -1,0 +1,668 @@
+V2L3     TITLE '                                  T I O T   T S O   C O>
+                M M A N D'
+***********************************************************************
+*                                                                     *
+* Title -- TIOT                                                       *
+*                                                                     *
+* Function / Operation -- The TIOT command displays the contents of   *
+*   the TIOT, as well as extended data related to individual entries  *
+*   in the TIOT.                                                      *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V2L4 -- July 2021                                                 *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements - None                                 *
+*     Maintenance - Correct S0C4 error                                *
+*   V2L3 -- November 2010                                             *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements - None                                 *
+*     Maintenance -                                                   *
+*       * Default AMODE changed to 31.                                *
+*         - The work area is allocated above the line                 *
+*         - $SETAM macro calls changed to comments                    *
+*         - Use of BASSM and BSM changed to comments                  *
+*         - Use of TIOEFSRT to locate a UCB made AMODE agnostic       *
+*       * Default RMODE changed to ANY.                               *
+*       * The AMODE and RMODE for the PCLs changed to 31/ANY.         *
+*       * Update the one and only CALL to COPYRITE                    *
+*   V2L2 -- December 2001                                             *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements - None                                 *
+*     Maintenance -                                                   *
+*       * Update COPYRITE macro and the one and only CALL to COPYRITE *
+*       * Support z/OS 1.2, where the I/O table was moved above the   *
+*         line                                                        *
+*   V2L1 -- Unknown date                                              *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements - Search TIOT by data set name         *
+*     Maintenance -                                                   *
+*       * Changed command syntax to FILE(ddn) / DDNAME(ddn) /         *
+*         DSNAME(dsn) / DATASET(dsn)                                  *
+*   V2L0 -- August 31, 1994                                           *
+*                                                                     *
+* Command Syntax --                                                   *
+*   TIOT DDNAME(DDNAME) DATASET(DSNAME)/DSNAME(DSNAME)                *
+*                                                                     *
+*   The ddname is optional.  If it is not present, the command lists  *
+*   all dd entries in the TIOT.                                       *
+*                                                                     *
+*   DATASET(dsname)/DSNAME(dsname)                                    *
+*                                                                     *
+*   Display only DD names that include the requested data set name    *
+*                                                                     *
+* Attributes --                                                       *
+*   TIOT is reentrant, refreshable and reusable.  It operates in      *
+*   problem key and problem state.  It is AMODE=31, RMODE=ANY.        *
+*                                                                     *
+* Restrictions --                                                     *
+*   * TIOT lists information only for the first UCB section of a DD   *
+*     entry.                                                          *
+*   * TIOT uses the SWAREQ macro to obtain the address of a JFCB.     *
+*     It uses the MVS/XA form of the TCT.                             *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         MACRO
+         SETR
+         LCLA  &A
+.L       AIF   (&A GT 15).X
+R&A      EQU   &A
+&A       SETA  &A+1
+         AGO   .L
+.X       MEND
+         SPACE 5
+         MACRO
+&NAME    COPYRITE &TEXT
+         CNOP  0,8
+         LCLC  &S1,&S2,&S3
+&S1      SETC  'IHB&SYSNDX.A'
+&S2      SETC  'IHB&SYSNDX.B'
+&S3      SETC  'IHB&SYSNDX.C'
+&NAME    B     &S3-*(,15)
+         DC    AL1(&S2)
+&S1      DC    C&TEXT,C' -- &SYSDATE &SYSTIME'
+&S2      EQU   *-&S1
+&S3      STM   14,12,12(13)
+         MEND
+         SPACE 5
+         MACRO
+&NAME   $SETAM &X,&WKREG=14
+         AIF   ('&X' EQ '31').AM31
+         AIF   ('&X' EQ '24').AM24
+         MNOTE 8,'*** AMODE IS NOT 24 OR 31 ***'
+         MEXIT
+.AM31    CNOP  2,4
+&NAME    ICM   &WKREG,B'1111',*+6  LOAD NEW ADDRESS REGISTER
+         BSM   0,&WKREG            CONVERT ADDRESSING MODE
+         DC    A(X'80000000'+(*+4))  RESUME ADDRESS
+         MEXIT
+.AM24    CNOP  2,4
+&NAME    ICM   &WKREG,B'1111',*+6  LOAD NEW ADDRESS REGISTER
+         BSM   0,&WKREG            CONVERT ADDRESSING MODE
+         DC    A(*+4)              RESUME ADDRESS
+         MEND
+         SPACE 5
+         MACRO
+&NAME   $CALLTSO &EP,&MF=I
+         LCLC  &ENAME,&LNAME,&S
+         AIF   ('&MF(1)' NE 'E').MFERR
+         AIF   (N'&MF LT 2).MFERR
+&ENAME   SETC  'ADR'.'&EP'(4,K'&EP-3)
+&LNAME   SETC  'LNK'.'&EP'(4,K'&EP-3)
+&S       SETC  'IHB&SYSNDX'
+         AIF   ('&MF(2)'(1,1) EQ '(').MFR
+&NAME    LA    R1,&MF(2)           Load parm list address
+         AGO   .LINK
+.MFR     AIF   ('&MF(2)' EQ '(1)' OR '&MF(2)' EQ '(R1)').SETNAME
+&S       SETC  '&MF(2)'(2,K'&MF(2)-2)
+&NAME    LR    R1,&S               Copy parm list address to R1
+         AGO   .LINK
+.SETNAME AIF   ('&NAME' EQ '').LINK
+&NAME    DC    0H'0'
+.LINK    ICM   R15,B'1111',&ENAME  Load addr of preloaded routine
+         BZ    &S.A                Br if module is not preloaded
+         CALL  (15)                Call the routine
+         B     &S.B                Br around LINK macro
+*        LINK  SF=(E,&LNAME),MF=(E,(1))
+&S.A     LINK  SF=(E,&LNAME),MF=(E,(1)) Use LINK macro to call the rtn
+&S.B     DC    0H'0'
+         MEXIT
+.MFERR   MNOTE 8,'MF=(E,...) MUST BE SPECIFIED'
+         MEND
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJCPPL ,
+         IKJPPL
+MYPPLL   EQU   *-PPL
+         IKJPTPB ,
+MYPTPBL  EQU   *-PTPB
+PUTLPARM DSECT
+         PUTLINE MF=L
+PUTLLEN  EQU   *-PUTLPARM
+         IKJIOPL ,
+MYIOPLL  EQU   *-IOPL
+         CVT   DSECT=YES
+         IKJTCB ,
+         IEFUCBOB ,
+TIOT     DSECT
+         IEFTIOT1 ,
+         IEFTCT ,
+         IEFZB505 LOCEPAX=YES
+MYZB505L EQU   *-ZB505
+         IEFJESCT ,
+         IEFQMIDS ,
+         EJECT
+WORK     DSECT
+MYPPL    DS    XL(MYPPLL),0D
+MYPTPB   DS    XL(MYPTPBL),0D
+MYIOPL   DS    XL(MYIOPLL),0D
+PUTL     DS    XL(PUTLLEN),0D
+MYZB505  DS    XL(MYZB505L),0D
+DWORK    DS    D
+DDNAME   DS    CL8
+SWAPARM  SWAREQ MF=L
+SWAPARML EQU   *-SWAPARM
+JFCB     DS    0D
+         IEFJFCBN ,
+ECB      DS    A
+ANS      DS    A
+TIOTADDR DS   0A
+ATIOT    DS    A
+TCTADDR  DS    A
+ADREFF02 DS    A
+ADRPARS  DS    A
+ADRPUTL  DS    A
+DSNAMEL  DS    A
+DDNAMEL  DS    H
+DSNAME   DS    CL44
+GENMSG   DS    XL256
+         ORG   GENMSG+4
+GENMSGD  DS   0XL(L'GENMSG-4)
+MSGDD    DS    CL8,C
+MSGADDR  DS    CL4,C
+MSGVOL   DS    CL6,C
+MSGCLEAR EQU   *-GENMSGD
+MSGIOCNT DS   0C
+         ORG   ,
+CNVTWORK DS    C' NNN,NNN,NNN,NNN,NNN'
+SWITCH   DS    B
+DDFMT    EQU   X'80'
+DDFND    EQU   X'40'
+         IKJEFFMT MTFORMAT=NEW
+         ORG   ,
+         IKJEFFGF ,
+         ORG   ,
+S        DS    (4*9)D
+WORKL    EQU   *-WORK
+         SPACE 1
+         SETR
+         POP   PRINT
+         EJECT
+TIOTCODE CSECT                     Define program CSECT
+TIOTCODE AMODE 31                  Define program AMODE
+TIOTCODE RMODE ANY                 Define program RMODE
+         USING *,R12               Establish program addressability
+         USING WORK,R11            Establish work area addressability
+         COPYRITE 'TIOT TSO Command -- V2L3' Save caller's regs
+         LR    R12,R15             Copy the EP address to R12
+         LR    R2,R1               Copy the CPPL address to R2
+         LA    R5,WORKL            Load length of the work area
+         GETMAIN RU,LV=(R5)        Allocate storage for the work area
+         LR    R4,R1               Copy the work area address to R4
+         LR    R11,R1               .. and to R11
+         SR    R15,R15             Set R15 = 0
+         MVCL  R4,R14              Clear the entire work area
+         LA    R15,S               Load address of a save area
+         ST    R15,8(,R13)         Add the new save area
+         ST    R13,4(,R15)          to the save area chain
+         LR    R13,R15             Establish a new save area pointer
+         MVI   SWITCH,DDFND        Indicate DD name found
+         SPACE 1
+         USING CVTMAP,R15          Establish CVT addressability
+         SPACE 1
+         L     R15,CVTPTR          Load address of the CVT
+         L     R1,CVTPARS          Load possible IKJPARS address
+         ST    R1,ADRPARS          Save IKJPARS address
+         L     R1,CVTPUTL          Load possible IKJPUTL address
+         ST    R1,ADRPUTL          Save IKJPUTL address
+         L     R1,CVTEFF02         Load possible IKJEFF02 address
+         ST    R1,ADREFF02         Save IKJEFF02 address
+         L     R15,CVTTCBP         Load address of the TCB pointers
+         L     R15,4(,R15)         Load adderss of the current TCB
+         SPACE 1
+         USING TCB,R15             Establish TCB addressability
+         SPACE 1
+         L     R14,TCBTIO          Load address of the TIOT
+         ST    R14,TIOTADDR        Save the TIOT address
+         L     R14,TCBTCT          Load address of the Timing Cntl Tab
+         ST    R14,TCTADDR         Save the TCB address
+         SPACE 1
+         DROP  R15
+         USING CPPL,R2             Establish CPPL addressability
+         SPACE 1
+         ST    R2,MTCPPLP          Store CPPL for IKJEFF02
+         ST    R2,GFCPPLP           and for IKJEFF19
+         L     R0,CPPLCBUF         Load the addr of the command buffer
+         ST    R0,PPLCBUF-PPL+MYPPL Save it for Parse
+         L     R0,CPPLUPT          Load the addr of the UPT
+         ST    R0,PPLUPT-PPL+MYPPL  Save it for Parse
+         ST    R0,IOPLUPT-IOPL+MYIOPL  and PUTLINE
+         L     R0,CPPLECT          Load the addr of the ECT
+         ST    R0,PPLECT-PPL+MYPPL  Save it for Parse
+         ST    R0,IOPLECT-IOPL+MYIOPL  and PUTLINE
+         SPACE 1
+         DROP  R2                  Kill CPPL addressability
+         SPACE 1
+         LA    R0,ANS              Load addr of the PDL pointer
+         ST    R0,PPLANS-PPL+MYPPL Save it for Parse
+         LA    R0,ECB              Load addr of the ECB
+         ST    R0,PPLECB-PPL+MYPPL Save its address for Parse
+         ST    R0,IOPLECB-IOPL+MYIOPL .. for PUTLINE
+         ST    R0,GFECBP                .. for IKJEFF19
+         ST    R0,MTECBP                  .. and for IKJEFF02
+         L     R0,=A(MAINPCL)      Load addr of the Parse PCL
+         ST    R0,PPLPCL-PPL+MYPPL Save its address
+         SPACE 1
+         LA    R0,MTCSECTP         Load addr of the data part of the   ?
+                                    IKJEFF02 parm list
+         ST    R0,MTPLPTR          Save the addr in the IKJEFF02 parms
+         L     R0,=A(TIOTMSGS)     Load address of message area
+         ST    R0,MTCSECTP         Store for IKJEFF02
+         MVI   MTSW1,MTPUTLSW      Indicate IKJEFF02 is to do PUTLINEs
+         MVI   MTSW2,MTFMT
+         SPACE 1
+         MVC   DDNAME,=CL8' '      Clear the DDNAME
+         SPACE 1
+        $CALLTSO IKJPARS,MF=(E,MYPPL) Use IKJPARSE to examine the      ?
+                                       command line
+         LTR   R15,R15             Test the return code from Parse
+         BZ    PARSOK              Br if Parse completed OK
+         ST    R15,GFRCODE         Save the return code for IKJEFF19
+         LA    R15,GFPARSE         Load Parse code
+         STH   R15,GFCALLID        Store Parse code for IKJEFF19
+         LA    R0,GFPARMS          Load addr of the IKJEFF19 data
+         ST    R0,DWORK            Setup a parameter list
+         LINK  SF=(E,LNKEFF19),MF=(E,DWORK) Use IKJEFF19 to tell the   ?
+                                             problem
+         LA    R10,16              Set the return code
+         B     EXIT                And exit
+         EJECT
+         USING MAINPDL,R10         Establish PDL addressability
+         SPACE 1
+PARSOK   L     R10,ANS             Load address of the PDL
+         TM    MAINDD+6,X'80'      Test if the DDname is specified
+         BZ    NODD                Br if not
+         LA    R14,DDNAME          Load addr of the DDNAME
+         LA    R15,L'DDNAME        Load length
+         L     R0,MAINDD           Load addr of the command line DDNAME
+         LH    R1,MAINDD+4         Load length of the cmd line DDNAME
+         STH   R1,DDNAMEL          Store length of the DDNAME
+         O     R1,=AL1(C' ',0,0,0) Add a fill character
+         MVCL  R14,R0              Copy the DDNAME
+         NI    SWITCH,255-DDFND    Reset DDFND switch
+         SPACE 1
+NODD     TM    MAINDSN+6,X'80'     Test if DSNAME specified
+         BZ    NODSN               Br if not
+         LA    R14,DSNAME          Load address of my DSNAME
+         LA    R15,L'DSNAME        Load length of my DSNAME
+         L     R0,MAINDSN          Load address of cmd line DSN
+         LH    R1,MAINDSN+4        Load length of cmd line DSN
+         ST    R1,DSNAMEL          Save length of DSN
+         O     R1,=AL1(C' ',0,0,0) Add a fill character
+         MVCL  R14,R0              Copy the data set name
+         SPACE 1
+NODSN    IKJRLSA ANS               Release the PDL
+         SPACE 1
+         USING TIOT,R10            Establish TIOT addressability
+         SPACE 1
+         L     R10,TIOTADDR        Load address of the TIOT
+         LA    R14,GENMSGD         LOad addr of the message
+         MVC   0(L'TIOCNJOB,R14),TIOCNJOB Copy the jobname
+         LA    R14,L'TIOCNJOB(,R14) Load end of the jobname
+         BCTR  R14,0               Backup a byte
+         CLI   0(R14),C' '         Test if trailing blank
+         BE    *-6                 Br if trailing blank
+         MVC   2(L'TIOCNJOB,R14),TIOCSTEP Copy first stepname
+         LA    R14,2+L'TIOCNJOB(,R14) Load end of first stepname
+         BCTR  R14,0               Backup 1 byte
+         CLI   0(R14),C' '         Test if trailing blank
+         BE    *-6                 Br if so
+         MVC   2(L'TIOCNJOB,R14),TIOCSTEP+L'TIOCNJOB Copy 2nd step name
+         LA    R14,2+L'TIOCNJOB(,R14) Load end of 2nd step name
+         BCTR  R14,0               Backup 1 byte
+         CLI   0(R14),C' '         Test if trailing blank
+         BE    *-6                 Br if so
+         LA    R14,1(,R14)         Get true end of data
+         LA    R1,GENMSG           Load address of the message buffer
+         SR    R14,R1              Compute length
+         STH   R14,0(,R1)          Store message len in the RDW
+         L     R15,=A(PUTLDATA)    Load addr of PUTLDATA
+         CALL  (15)                Write the generated line
+         LA    R10,TIOENTRY        Load address of the 1st TIOT DD     ?
+                                    entry
+         SPACE 1
+         USING TIOENTRY,R10        Establish TIOT DD entry addressing
+         SPACE 1
+NDD0100  CLI   TIOELNGH,0          Test if end of the TIOT
+         BE    NDD0500             Br if so
+NDD0200  TM    TIOESTTA,TIOSLTYP   Test if entry is marked as free
+         BO    NDD0400             Br if so
+         TM    DDNAME,255-C' '     Test if DDNAME specified
+         BZ    NDD0210             Br if not
+         LH    R15,DDNAMEL         Load length of the DDNAME
+         LA    R14,DDNAME          Load address of the DDNAME
+         LR    R1,R15              Copy the length to R1
+         LA    R0,TIOEDDNM         Load start of DDNAME in the TIOT
+         CLCL  R14,R0              Compare
+*        CLC   DDNAME,TIOEDDNM     Compare DDNAME w/ TIOT ddname
+         BNE   NDD0400             Br if not a match
+         OI    SWITCH,DDFND        Indicate DD statement matched
+NDD0210  TM    DSNAME,255-C' '     Test if DSN specified
+         BZ    NDD0300             Br if not
+         LR    R9,R10              Copy current TIOT address to R9
+NDD0220  LA    R1,TIOEJFCB-TIOENTRY(,R9) Load addr of JFCB pointer
+         L     R15,=A(X'80000000'+GETJFCB) Load addr of the JFCB reader
+         CALL  (15)                Read the JFCB
+*        ORG   *-2
+*        BASSM R14,R15               .. Call and convert to AMODE 31
+         CLC   DSNAME,JFCBDSNM     Compare entire DSN
+         BE    NDD0300             Br if 100% match
+         L     R1,DSNAMEL          Load length of DSNAME in parameter
+         LA    R15,JFCBDSNM(R1)    Compute addr of possible index      ?
+                                    separator in JFCB
+         CLI   0(R15),C'.'         Test if index separator
+         BNE   NDD0290             Br if not
+         LA    R0,JFCBDSNM         Load start of DSN
+         LR    R15,R1              Copy length to R15
+         LA    R14,DSNAME          Load addr of DSNAME level to test
+         CLCL  R14,R0              Compare
+         BE    NDD0300             Br if DSNAME level matches
+NDD0290  SR    R15,R15             Set R15 = 0
+         IC    R15,TIOELNGH-TIOENTRY(,R9) Load length of the entry
+         AR    R9,R15              Compute address of the next DD entry
+         CLI   TIOELNGH-TIOENTRY(R9),0 Test if end of TIOT
+         BE    NDD0500             Br if so
+         TM    TIOESTTA-TIOENTRY(R9),TIOSLTYP Test if free entry
+         BO    NDD0400             End of concatenation if so
+         TM    TIOEDDNM-TIOENTRY(R9),255-C' ' Test if DD name assigned
+         BZ    NDD0220             Br if not, continue
+         LR    R10,R9              Update "current" DD entry pointer
+         B     NDD0200             Go start the next ddname
+NDD0300  LR    R1,R10              Copy the DD entry address to R1
+         L     R15,=A(FMTDD)       Load addr of FMTDD
+         CALL  (15)                Format the DD entry
+         OI    SWITCH,DDFMT        Indicate at least 1 DD entry        ?
+                                    formatted
+* This subscan scans to the end of a concatenation
+         SR    R15,R15             Set R15 = 0
+         IC    R15,TIOELNGH        Load length of the current entry
+         AR    R10,R15             Compute start of the next entry
+         CLI   TIOELNGH,0          Test if end of the TIOT
+         BE    NDD0500             Br if so
+         TM    TIOESTTA,TIOSLTYP   Test if entry is free
+         BO    NDD0400             Br if so, its the end of the        ?
+                                    concatenation
+         TM    TIOEDDNM,255-C' '   Test if DDname is filled in
+         BZ    NDD0300             Br if not to continue scanning the  ?
+                                    concatenation
+         B     NDD0200             Go start the next ddname
+NDD0400  SR    R15,R15             Set R15 = 0
+         IC    R15,TIOELNGH        Load length of the current TIOT     ?
+                                    entry
+         AR    R10,R15             Compute addr of the next TIOT entry
+         B     NDD0100             Go check the next TIOT DD entry
+         SPACE 1
+         DROP  R10                 Kill TIOT DD entry addressability
+         SPACE 1
+NDD0500  SR    R10,R10
+         EJECT
+EXIT     LTR   R10,R10
+         BNZ   XIT0400
+         TM    SWITCH,DDFMT        Test if any DD entries formatted
+         BO    XIT0400             Br if so
+         MVC   MTMSGID,=C'NADA'    Preset the message code
+         TM    DDNAME,255-C' '     Test if DD name specified
+         BZ    XIT0100             Br if not
+         MVC   MTMSGID,=C'NODD'    Indicate new message code
+         LA    R0,DDNAME           Load address of the DD name text
+         LA    R1,L'DDNAME         Add length
+         TM    DSNAME,255-C' '     Test if DSNAME specified
+         BZ    XIT0200             Br if not
+         MVC   MTMSGID,=C'NODS'    Indicate new message code
+         LA    R0,DSNAME           Load addr of the dsname
+         LA    R1,L'DSNAME         Add length
+         ST    R1,MTINSRTS         Store length
+         ST    R0,MTINSRTS+4       Srore name pointer
+         LA    R0,DDNAME
+         LA    R1,L'DDNAME
+         ST    R0,MTINSRTS+12
+         ST    R1,MTINSRTS+8
+         B     XIT0300             And go write the message
+XIT0100  TM    DSNAME,255-C' '     Test if DSNAME specified
+         BZ    XIT0200             Br if not
+         MVC   MTMSGID,=C'NODD'    Make sure NODD message code
+         LA    R0,DSNAME           Load addr of DSNAME
+         LA    R1,L'DSNAME         Add length of DSNAME
+XIT0200  ST    R0,MTINSRTS+4       Store DSNAME / DDNAME pointer
+         ST    R1,MTINSRTS
+XIT0300 $CALLTSO IKJEFF02,MF=(E,MTPARML) Write the message
+XIT0400  LR    R1,R11              Copy the work area address to R1
+         LA    R0,WORKL            Load length of the work area
+         L     R13,4(,R13)         Replace the save area pointer w/    ?
+                                    the address of the caller's save   ?
+                                     area
+         FREEMAIN RU,LV=(0),A=(1)  Release the work area
+         LR    R15,R10             Copy the RC to R15
+         RETURN (14,12),T,RC=(15)  Restore regs and return to caller
+         EJECT
+         USING TIOENTRY,R10        Establish TIOT DD entry addressing
+         SPACE 1
+         CNOP  0,8
+FMTDD    SAVE  (14,12),,*          Save registers
+         LA    R15,72(,R13)        Load address of the next save area
+         ST    R13,4(,R15)         Add new save area to the
+         ST    R15,8(,R13)          save area chain
+         LR    R13,R15             Establish a new save area pointer
+         LR    R10,R1              Copy the address of the TIOT DD     ?
+                                    entry to R10
+         SPACE 1
+         LA    R0,GENMSGD          Load start of the message area
+         LA    R1,MSGCLEAR         Load length of message area we'll   ?
+                                    clear
+         L     R15,=AL1(C' ',0,0,0) Load fill character & input length
+         MVCL  R0,R14              Clear the output prefix area
+         MVC   MSGDD,TIOEDDNM      Copy the ddname
+         LA    R2,MSGIOCNT         Load start of variable area
+         SR    R15,R15             Set reg 15 = 0
+         ICM   R15,B'0111',TIOEFSRT Load possible UCB address
+         BZ    FDD0600             Br if no UCB address in the TIOT
+         USING UCBOB,R15           Establish UCB addressability
+         UNPK  MSGADDR(L'MSGADDR+1),UCBCHAN(L'UCBCHAN+1) Convert
+         TR    MSGADDR,HEXTAB                  device address to EBCDIC
+         MVI   MSGADDR+L'MSGADDR,C' '
+         LA    R2,MSGIOCNT         Load start of variable area
+         CLI   UCBTBYT3,UCB3TAPE   Test if tape
+         BE    FDD0100             Br if so
+         CLI   UCBTBYT3,UCB3DACC   Test if disk
+         BNE   FDD0600             Br if not
+FDD0100  TM    UCBVOLI,255-C' '    Test if VOLSER is present
+         BZ    FDD0110             Br if not
+         MVC   MSGVOL,UCBVOLI      Copy volume serial to message
+FDD0110  LR    R0,R10              Copy addr of the current TIOT DD    ?
+                                    entry to R0
+         S     R0,TIOTADDR         Compute offset of the current DD    ?
+                                    entry
+         L     R15,TCTADDR         Load address of the TCT
+*       $SETAM 31,WKREG=14
+         L     R15,TCTIOTBL-SMFTCT(,R15) Load addr of the I/O table
+*       $SETAM 24,WKREG=14
+         LTR   R15,R15             Test if I/O table is present
+         BZ    FDD0900             Br if not
+*       $SETAM 31,WKREG=14
+         L     R1,TCTPLEXT-TCTTIOT(,R15) Load length of the TIOT       ?
+                                          section
+         N     R1,=A(X'FFFFFF')    Turn off high order bits and test
+         BZ    FDD0400             Br if TIOT lookup section is missing
+         AR    R1,R15              Compute end of the TIOT section
+         LA    R14,TCTCOMIO(,R15)  Compute start of the first TIOT     ?
+                                    lookup element
+FDD0200  CR    R14,R1              Compare addr w/ end of TIOT section
+         BNL   FDD0400             Br if entry not in table
+         CLM   R0,B'1111',TCTDCBTD-TCTIODSP(R14) Compare TIOT offset   ?
+                                    w/ offset for this section
+         BE    FDD0300             Br if found
+         CLC   =F'0',TCTDCBLE-TCTIODSP(R14) Test if end of TIOT lookup ?
+                                    section
+         BE    FDD0400             Br if so
+         LA    R14,TCTDCBLE-TCTIODSP(,R14) Compute addr of the next    ?
+                                            TIOT lookup element
+         B     FDD0200             And continue scanning
+FDD0300  L     R14,TCTIOTSD-TCTIODSP(,R14) Load offset of the data
+         AR    R14,R15             Compute address of the data
+         L     R15,TCTDCTR-TCTDDENT(,R14) Load EXCPs
+         CVD   R15,DWORK           Convert EXCPs to packed deciml
+         MVC   CNVTWORK,CNVTMASK   Copy edit mask to work area
+         LA    R1,CNVTWORK+L'CNVTWORK-1 Load end of output area
+         EDMK  CNVTWORK,DWORK      Convert EXCP count to EBCDIC
+         LR    R0,R1               Copy start of converted value to R0
+         LA    R1,CNVTWORK+L'CNVTWORK Load end of the work area
+         SR    R1,R0               Compute length of the number
+         LR    R3,R1               Copy length to R3
+         MVCL  R2,R0               Copy converted value to the line
+         MVI   0(R2),C' '          Add a blank
+         LA    R2,1(,R2)            .. and update the output pointer
+FDD0400  LA    R1,TIOEJFCB         Load address of the JFCB pointer
+         L     R15,=A(X'80000000'+GETJFCB) Load addr of the JFCB reader
+         CALL  (15)                Read the JFCB
+*        ORG   *-2
+*        BASSM R14,R15               .. Call and convert to AMODE 31
+         LA    R4,JFCBDSNM         Load address of the data set name
+         LA    R5,JFCBDSNM+L'JFCBDSNM  Load length of the data set name
+         BCTR  R5,0                Backup 1 byte
+         CLI   0(R5),C' '          Test if end of the dsn
+         BE    *-6                 Br if not
+         LA    R5,1(,R5)           Bump output pointer
+         SR    R5,R4               Compute length of the dsn
+         LR    R3,R5               Copy length to R3
+         MVCL  R2,R4               Copy the data set name to the       ?
+                                    output line
+*       $SETAM 24,WKREG=14         Return to 24-bit addressing
+         B     FDD0900             And go write the output line
+* No UCB addr is present, convert TIOELINK bits to human usable output
+FDD0600  LM    R15,R1,=A(FDDTAB,FDDTABL,FDDTABE) Load table range
+FDD0700  CLC   TIOELINK,0(R15)     Compare TIOELINK w/ data in table
+         BE    FDD0800             Br if match
+         BXLE  R15,R0,FDD0700      Try the next table entry
+* R15 points to a entry that indicates DD DUMMY if TIOELINK does not
+* match
+FDD0800  MVC   MSGADDR,1(R15)      Copy type code to MSGADDR
+         LA    R2,MSGIOCNT         Load start of the variable area
+* The data line is all filled in, write it
+FDD0900  BCTR  R2,0                Backup a byte
+         CLI   0(R2),C' '          Test if trailing blank
+         BE    FDD0900             Br if so
+         LA    R2,1(,R2)           Bump output
+         LA    R1,GENMSG           Load start of output line
+         SR    R2,R1               Compute length of the output
+         STH   R2,0(,R1)           Store length in the RDW
+         L     R15,=A(PUTLDATA)    Load address of PUTLDATA
+         CALL  (15)                Write the message
+         L     R13,4(,R13)         Load addr of the caller's save area
+         RETURN (14,12),T          Return to the caller
+         SPACE 1
+         DROP  R10
+         EJECT
+         CNOP  0,8
+GETJFCB  SAVE  (14,12),,*          Save registers
+         LA    R15,72(,R13)        Compute addr of the next save area
+         ST    R13,4(,R15)         Add new save area to the
+         ST    R15,8(,R13)          save area chain
+         LR    R13,R15             Copy the save area address to R13
+         LR    R2,R1               Copy the addr of the JFCB pointer   ?
+                                    to R2
+         XC    MYZB505,MYZB505     Clear the SWAREQ work area
+         LA    R0,MYZB505          Load addr of the SWAREQ work area
+         ST    R0,DWORK            Store its addr
+         MVC   SWVA-ZB505+MYZB505,0(R2) Copy the addr of the JFCB to   ?
+                                         the SWAREQ work area
+         XC    SWAPARM(SWAPARML),SWAPARM Clear the SWAREQ parm list
+         SWAREQ FCODE=RL,EPA=DWORK,MF=(E,SWAPARM),UNAUTH=YES
+         L     R4,SWBLKPTR-ZB505+MYZB505 Load the JFCB address
+         MVC   JFCB(176),0(R4)     Copy the JFCB to my work area
+         L     R13,4(,R13)         Load addr of the caller's save area
+         RETURN (14,12),T,RC=(15)  Return to the caller
+*        ORG   *-2
+*        BSM   0,R14               Return and reset the AMODE
+         EJECT
+         CNOP  0,8
+PUTLDATA SAVE  (14,12),,*          Save registers
+         LA    R15,72(,R13)
+         ST    R13,4(,R15)
+         ST    R15,8(,R13)
+         LR    R13,R15
+         LR    R2,R1               Copy the output address to R2
+         MVC   PUTL,PTLDATA        Initialize the Putline PB
+         PUTLINE MF=(E,MYIOPL),    Wrte the line                       ?
+               OUTPUT=((R2),TERM,SINGLE,DATA),                         ?
+               PARM=PUTL,                                              ?
+               ENTRY=PUTLCALL
+PUTLCALL $CALLTSO IKJPUTL,MF=(E,(1))
+         L     R13,4(,R13)         Load addr of the caller's save area
+         RETURN (14,12),T,RC=(15)  Return to caller w/ the PUTLINE RC
+         SPACE 1
+PTLDATA  PUTLINE MF=L,                                                 ?
+               OUTPUT=(*-*,TERM,SINGLE,DATA)
+         SPACE 1
+         DROP  R11,R12
+         EJECT
+         DC    0D'0'
+HEXTAB   EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+CNVTMASK DC   0C' NNN,NNN,NNN,NNN,NNN',C' ',X'202020',C',',X'202020',C'?
+               ,',X'202020',C',',X'202020',C',',X'202120',0F'0'
+         SPACE 1
+LNKEFF02 LINK  SF=L,EP=IKJEFF02
+LNKPARS  LINK  SF=L,EP=IKJPARS
+LNKPUTL  LINK  SF=L,EP=IKJPUTL
+LNKEFF19 LINK  SF=L,EP=IKJEFF19
+         SPACE 1
+FDDTAB   DC    AL1(TIOTTERM),CL4'TERM'
+FDDTABL  EQU   *-FDDTAB
+         DC    AL1(TIOEDYNM),CL4'DYNM'
+         DC    AL1(TIOEQNAM),CL4'QNAM'
+         DC    AL1(TIOESSDS),CL4'SSDS'
+FDDTABE  EQU   *-FDDTABL
+         DC    AL1(0),CL4'DMY '
+         SPACE 1
+         DC    0D'0'
+         LTORG ,
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+MAINPCL  IKJPARM DSECT=MAINPDL
+MAINDAK  IKJKEYWD
+         IKJNAME DATASET,SUBFLD=MAINDAS
+         IKJNAME DSNAME,SUBFLD=MAINDAS
+MAINDDK  IKJKEYWD
+         IKJNAME DDNAME,SUBFLD=MAINDDS
+         IKJNAME FILE,SUBFLD=MAINDDS
+MAINDDS  IKJSUBF
+MAINDD   IKJIDENT 'DD NAME',FIRST=ALPHA,OTHER=ALPHANUM,MAXLNTH=8,      ?
+               PROMPT='DD NAME OR DD NAME PREFIX'
+MAINDAS  IKJSUBF
+MAINDSN  IKJPOSIT DSNAME,USID,PROMPT='DATA SET NAME'
+         IKJENDP ,
+MAINPCL  AMODE 31
+MAINPCL  RMODE ANY
+         POP   PRINT
+TIOTMSGS CSECT
+TIOTMSGS AMODE 31
+TIOTMSGS RMODE ANY
+         IKJTSMSG ('TIOT001E ',,' not allocated'),NODD
+         IKJTSMSG ('TIOT002E No DD statements allocated'),NADA
+         IKJTSMSG ('TIOT003E Data set ',,' not allocated in DD statemen?
+               t set ',),NODS
+         IKJTSMSG ,
+         SPACE 1
+         END   TIOTCODE

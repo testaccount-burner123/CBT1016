@@ -1,0 +1,10 @@
+Subject:  Updated SMYERS.TSOCMND.CBT,PDS
+From:     Steve Myers <mvsprog@yahoo.com>
+Date:     10/19/2021, 3:11 PM
+To:       Sam Golob <sbgolob@cbttape.org>
+
+Sam - I have updated SMYERS.TSOCMND.CBT.PDS.  I discovered
+source for the MINIFMT function was not included with KEEPITUP,
+and I made other documentation changes in KEEPITUP.
+
+- Steve

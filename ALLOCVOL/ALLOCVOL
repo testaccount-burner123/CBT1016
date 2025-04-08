@@ -1,0 +1,557 @@
+ALLOCVOL TITLE '                            Allocate a Volume Definitio>
+               n DD statement'
+***********************************************************************
+*                                                                     *
+* Title -- ALLOCVOL                                                   *
+*                                                                     *
+* Function / Operation -- ALLOCVOL allocates a DD statement as a      *
+*   volume definition DD statement as required by utilities like      *
+*   IEHLIST.                                                          *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L0 -- December 2010                                             *
+*                                                                     *
+* Command Line --                                                     *
+*   ALLOCVOL FILE(name) VOLUME(vvvvvv) | DATASET(xxx) |               *
+*            DSNAME(xxx) REUSE                                        *
+*                                                                     *
+*   When the DATASET or DSNAME parameter is used instead of the       *
+*   VOLUME parameter ALLOCVOL uses the catalog to determine the first *
+*   volume where the data set is located and uses that volume.        *
+*                                                                     *
+* CLIST / Rexx variables -- ALLOCVOL sets two CLIST or Rexx           *
+*  variables: ALLOCVOL is the volume allocated by ALLOCVOL, and       *
+*   ALLOCDD is the file name allocated by ALLOCVOL.                   *
+*                                                                     *
+* Attributes -- ALLOCVOL is reenterable, refreshable and reusable.    *
+*   It operates as a TSO command in task mode, problem state and      *
+*   problem key.  It uses no APF restricted services.                 *
+*                                                                     *
+* Messages --                                                         *
+*   AVM001I VOLUME vvvvvv ALLOCATED TO FILE ffffffff                  *
+*    Reason: ALLOCVOL allocated volume vvvvvv to DD statement         *
+*      ffffffff                                                       *
+*    System Action: ALLOCVOL terminates.                              *
+*    Programmer Response: None required.                              *
+*                                                                     *
+*   AVM002E DATA SET dddd IS NOT ON DASD!                             *
+*    Reason: ALLOCVOL determined that the data set specified by the   *
+*      DATASET or DSNAME parameter is not on a direct access volume.  *
+*    System Action: Any unexecuted commands entered by the terminal   *
+*      operator are deleted and the current CLIST or Rexx EXEC is     *
+*      terminated.                                                    *
+*    Programmer Response: Specify a data set on direct access storage.*
+*                                                                     *
+*   AVM003E DATA SET dddd IS MIGRATED!                                *
+*    Reason: ALLOCVOL determined that the data set specified by the   *
+*      DATASET or DSNAME parameter is migrated by DFHSM.              *
+*    System Action: Any unexecuted commands entered by the terminal   *
+*      operator are deleted and the current CLIST or Rexx EXEC is     *
+*      terminated.                                                    *
+*    Programmer Response: Recall the migrated data set and rerun      *
+*      ALLOCVOL.                                                      *
+*                                                                     *
+*   AVM004E DATA SET dddd IS  IS NOT CATALOGED!                       *
+*    Reason: ALLOCVOL determined that the data set specified by the   *
+*      DATASET or DSNAME parameter is not cataloged.                  *
+*    System Action: Any unexecuted commands entered by the terminal   *
+*      operator are deleted and the current CLIST or Rexx EXEC is     *
+*      terminated.                                                    *
+*    Programmer Response: Rerun the ALLOCVOL with a valid cataloged   *
+*      data set.                                                      *
+*                                                                     *
+*   AVM005E REUSE OPTION SPECIFIED, BUT THE FILE OPTION IS NOT        *
+*    SPECIFIED!                                                       *
+*    Reason: The REUSE option was specified in the command, but the   *
+*      FILE option was not specified.                                 *
+*    System Action: ALLOCVOL continues execution.                     *
+*    Programmer Response: None required.  ALLOCVOL assigns a system   *
+*      generated file name to the allocation.  The file name is       *
+*      reported in the AVM001I message.                               *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+ALLOCVOL CSECT                     Define the program CSECT
+ALLOCVOL AMODE 31                  Define the program AMODE
+         PUSH  PRINT
+         PRINT NOGEN
+MAINPCL  IKJPARM DSECT=MAINPDL
+KEYWD1   IKJKEYWD
+         IKJNAME FILE,SUBFLD=FILESF
+         IKJNAME DDNAME,SUBFLD=FILESF
+KEYWD2   IKJKEYWD
+         IKJNAME VOLUME,SUBFLD=VOLSF
+         IKJNAME DATASET,SUBFLD=DSNSF
+         IKJNAME DSNAME,SUBFLD=DSNSF
+REUS     IKJKEYWD
+         IKJNAME REUSE
+FILESF   IKJSUBF
+FILE     IKJIDENT 'FILE',FIRST=ALPHA,OTHER=ALPHANUM,MAXLNTH=8,        ->
+               PROMPT='FILE NAME'
+VOLSF    IKJSUBF
+VOL      IKJIDENT 'VOLUME SERIAL',FIRST=ALPHA,OTHER=ALPHANUM,         ->
+               MAXLNTH=6,PROMPT='VOLUME SERIAL'
+DSNSF    IKJSUBF
+DSN      IKJPOSIT DSNAME,USID,PROMPT='DATA SET NAME'
+         IKJENDP
+         SPACE 5
+VOLPCL   IKJPARM DSECT=VOLPDL
+VVOL     IKJIDENT 'VOLUME SERIAL',FIRST=ALPHA,OTHER=ALPHANUM,         ->
+               MAXLNTH=6,PROMPT='VOLUME SERIAL'
+         IKJENDP
+MAINPCL  CSECT
+         DC    0D'0'
+VOLPCL   CSECT
+         DC    0D'0'
+ALLOCVOL CSECT
+         EJECT
+         IEFZB4D0 ,                Define dynamic allocation data areas
+         IEFZB4D2 ,                Define dynamic allocation text units
+         IEFUCBOB ,                Define the UCB
+         CVT    DSECT=YES          Define the CVT
+         IKJTSVT ,                 Define the TSO vector table
+         IKJCPPL ,                 Define the TSO CPPL
+RCBUF    EQU    6+(CPPLCBUF-CPPL)/4  Define the command buffer register
+RECT     EQU    6+(CPPLECT-CPPL)/4  Define the register containing    ->
+                                     the ECT address
+RUPT     EQU    6+(CPPLUPT-CPPL)/4  Define the register containing    ->
+                                     the UPT address
+         IKJIOPL ,                 Define the TSO IOPL
+SZIOPL   EQU    *-IOPL
+         IKJPPL ,                  Define the TSO PPL and extend it   ->
+                                    to define the work area
+SAVEAREA DS    (3*9)D              3 OS/360 save areas
+         IKJEFFDF DFDSECT=NO,DFDSEC2=YES  Define the "DAIRFAIL"       ->
+                                           parameter list
+PPL      DSECT                     Return to the PPL DSECT
+         IKJEFFMT MTDSECT=NO       Define the IKJEFF02 parameter list ->
+                                    and parameter data
+ECB      DS    F                   An ECB
+PDLPTR   DS    A                   Main PDL address returned by IKJPARS
+PDLPTR2  DS    A                   Additional PDL address
+DYNRC    DS    F                   Dynamic allocation return code
+MYIOPL   DS    XL(SZIOPL),0D       A TSO IOPL for IKJSTCK
+*            IKJCT441 parameter list
+VPARM    CALL  ,(*-*,*-*,*-*,*-*,*-*,*-*,*-*,*-*,*-*),MF=L
+VTOKEN   DS    F                   (Not used!)
+VVLEN    DS    F                   Length of variable data
+VVADDR   DS    F                   Address of variable data
+VVNADDR  DS    F                   Address of varible name
+VRCP     DS    A                   IKJCT441 return code
+CAMLSTS  CAMLST NAME,*-*,,*-*      CAMLST used by LOCATE
+CAMLST   EQU   CAMLSTS,*-CAMLSTS
+STACKPBS STACK MF=L,DELETE=PROC    STACK parameter block
+STACKPB  EQU   STACKPBS,*-STACKPBS
+SWITCH   DS    B                   Switches
+SWERROR  EQU   X'80'               Error detected
+DUMMYCMD DS    XL5                 Dummy command
+DSNAME   DS    CL44                Data set name sent to LOCATE
+         DS    0D
+CATVAL   DS    XL265               LOCATE return area
+         ORG   CATVAL
+         DS    XL2                 Number of volumes
+CATDVTYP DS    XL4                 Device type
+CATVSER  DS    CL6                 Volume serial
+         DS    XL2
+         ORG   ,
+         DS    0D
+ALLOCPRM DS    XL256               Dynamic allocation parameter list
+WALEN    EQU   *-PPL               Work area length
+         POP   PRINT
+         EJECT
+ALLOCVOL CSECT                     Return to the program CSECT
+         SYSSTATE ARCHLVL=1        OS/390 V2 R10
+         USING PPL,11              Establish PPL and work area        ->
+                                    addressability
+         USING IOPL,MYIOPL         Establish IOPL addressability
+         USING *,12                Establish program addressability
+         SAVE  (14,12),,ALLOCVOL-&SYSDATE-&SYSTIME  Save registers
+         LR    12,15               Copy entry point address to reg 12
+         LR    2,1                 Copy CPPL address to reg 2
+         LM    6,9,0(1)            Load the CPPL into registers 6 to 9
+         LHI   5,WALEN             Load the length of the work area
+         GETMAIN RU,LV=(5)         Allocate storage for the PPL and   ->
+                                    work area
+         LR    4,1                 Copy the address to reg 4
+         LR    11,1                  and reg 11
+         SR    15,15               Set reg 15 = 0
+         MVCL  4,14                Clear the work area
+         LA    15,SAVEAREA         Load address of the new save area
+         ST    13,4(,15)           Add the new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish the newsave area pointer
+         ST    RCBUF,PPLCBUF       Initialize
+         ST    RECT,PPLECT          the
+         ST    RUPT,PPLUPT           Parse
+         LA    0,ECB                  Parameter
+         ST    0,PPLECB                List
+         ST    0,IOPLECB
+         L     0,=A(MAINPCL)
+         ST    0,PPLPCL
+         LA    0,PDLPTR
+         ST    0,PPLANS
+         ST    RECT,IOPLECT        Initialize the
+         ST    RUPT,IOPLUPT         IOPL
+         ST    2,DFCPPLP           Initialize
+         L     0,=A(0)              the
+         ST    0,DFJEFF02            "DAIRFAIL"
+         LA    0,DYNRC                parameter
+         ST    0,DFRCP                 list
+         LA    0,=AL1(0,DFSVC99)
+         ST    0,DFIDP
+         ST    2,MTCPPLP           Initialize
+         LA    0,MTCSECTP           the
+         ST    0,MTPLPTR             IKJEFF02
+         L     0,=A(AVMSGS)           parameter
+         ST    0,MTCSECTP              list
+         MVI   MTSW1,MTPUTLSW           and parameter data
+         OI    SWITCH,SWERROR      Preset SWITCH
+         LINK  SF=(E,CALLPARS),MF=(E,(11))  Examine the command line
+         LTR   15,15               Test RC from IKJPARS
+         JNZ   EXIT                Br if IKJPARS failed
+         L     10,PDLPTR           Load address of the PDL from IKJPARS
+         USING MAINPDL,10          Establish PDL addressability
+         ICM   0,B'0011',REUS      Load REUS specification
+         JZ    NOREUSE             Br if REUSE notspecified
+         TM    FILE+6,X'80'        Test if FILE provided
+         JO    UNALLOC             Br if so
+         L     0,=C'MS05'          Load the message ID
+         BRAS  14,PUTMSG           Write REUSE + no file message
+         J     NOREUSE
+UNALLOC  MVC   ALLOCPRM(UL),U      Copy the unallocate parameter list ->
+                                    to the work area
+         LH    1,FILE+4            Load the length of the file name
+         STCM  1,B'0011',UDDN-U+ALLOCPRM-2  Store the length
+         L     0,FILE              Load the address of the file name
+         LA    14,UDDN-U+ALLOCPRM  Save the length
+         LR    15,1                Copy the length to reg 15
+         MVCL  14,0                Copy the file name to the DYNALLOC ->
+                                    parameter list
+         BRAS  14,DYNALLOC         Free the file
+NOREUSE  MVC   ALLOCPRM(AL),A      Copy the allocate parameter list   ->
+                                    to the work area
+         TM    FILE+6,X'80'        Test if FILE(xxx) specified
+         JZ    NOFILE              Br if not
+         LH    15,FILE+4           Load the length of the file name
+         STCM  15,B'0011',ADDN-A+ALLOCPRM-2  Store the length
+         LA    14,ADDN-A+ALLOCPRM  Load addr of the file name in the  ->
+                                    DYNALLOC parameter list
+         L     0,FILE              Load address of the file name
+         LR    1,15                Copy the length to reg 1
+         MVCL  14,0                Copy the file name to the DYNALLOC ->
+                                    parameter list
+         LHI   0,DALDDNAM          Load the DD name key
+         STCM  0,B'0011',ADDN-A+ALLOCPRM-6  Store it in the DYNALLOC  ->
+                                    parameter list
+NOFILE   TM    VOL+6,X'80'         Test if VOLUME(xxxxxx) specified
+         JO    MOVEVOL             Br if so
+         TM    DSN+6,X'80'         Test if DATASET(xxx) or DSNAME(xxx)->
+                                    specified
+         JO    LOCATE              Br if so
+* Neither VOL(xxx) or DSN(xxx) specified.  Call IKJPARS with a dummy
+* command line to get a volume name
+         MVC   DUMMYCMD,CMD        Copy the dummy command line to the ->
+                                    work area
+         LA    0,DUMMYCMD          Load addr of the dummy command
+         ST    0,PPLCBUF           Save it in the PPL
+         LA    0,PDLPTR2           Load addr of the 2nd PDL pointer
+         ST    0,PPLANS            Save it in the PPL
+         L     0,=A(VOLPCL)        Load addr of the volume prompt PCL
+         ST    0,PPLPCL            Save it in the PPL
+         OI    SWITCH,SWERROR      Set the error bit
+         LINK  SF=(E,CALLPARS),MF=(E,(11))  Get the volume
+         LTR   15,15               Test the return code from IKJPARS
+         JNZ   EXIT                Exit if the prompt failed
+         PUSH  USING
+         L     10,PDLPTR2          Load addr of the second PDL
+         USING VOLPDL,10           Establish PDL addressability
+         TM    VVOL+6,X'80'        Verify a volume is present
+         JZ    EXIT                Exit if not
+         LH    15,VVOL+4           Load the length of the volume
+         L     0,VVOL              Load the address of the volume
+         LR    1,15                Copy the length to reg 1
+         LA    14,AVOL-A+ALLOCPRM  Load the addr of the volume
+         STCM  15,B'0011',AVOL-A+ALLOCPRM-2  Store the length of the  ->
+                                              volume in the DYNALLOC  ->
+                                               parameter list
+         MVCL  14,0                Copy the volume to the DYNALLOC    ->
+                                               parameter list
+         IKJRLSA PDLPTR2           Release the second PDL
+         XC    PDLPTR2,PDLPTR2     Clear the pointer
+         J     ALLOC               Do the allocation
+         POP   USING
+MOVEVOL  LH    15,VOL+4            Load the length of the volume
+         L     14,VOL              Load the address of the volume
+         LR    1,15                Copy the volume length to reg 1
+         STCM  15,B'0011',AVOL-A+ALLOCPRM-2  Store the volume length  ->
+                                              in the DYNALLOC parm list
+         LA    0,AVOL-A+ALLOCPRM   Load the address of the volume in  ->
+                                    in the DYNALLOC parm list
+         MVCL  0,14                Copy the volume to the DYNALLOC    ->
+                                    parameter list
+         J     ALLOC               Go allocate the volume
+LOCATE   MVC   CAMLST,MASTCAMLST   Copy the master CAMLST to the work ->
+                                    area
+         LA    14,DSNAME           Fill in the addresses
+         ST    14,CAMLST+4          in the work area
+         LA    0,CATVAL              CAMLST
+         ST    0,CAMLST+12
+         LA    15,L'DSNAME         Load the length of the DSNAME
+         L     0,DSN               Load the addr of the command line  ->
+                                    data set name
+         LH    1,DSN+4             Load the length of the data set name
+         ICM   1,B'1000',=C' '     Load the fill character
+         MVCL  14,0                Copy the data set name to the work ->
+                                    area
+         LOCATE CAMLST             Get volume information from the    ->
+                                    catalog
+         LTR   15,15               Test the LOCATE return code
+         JZ    LMOVE               Br if OK
+         LA    0,DSNAME            Load the address of the DNAME
+         ST    0,MTINSRTS          Store it for IKJEFF02
+         MVI   MTINSRTS,L'DSNAME   Store the length for IKJEFF02
+         L     0,=C'MS04'          Load the message ID
+*        ST    0,MTMSGID           Store it for IKJEFF02
+         BRAS  14,PUTMSG           Write the message
+         J     EXIT                And exit
+LMOVE    CLI   CATDVTYP+UCBTBYT3-UCBTYP,UCB3DACC  Verify its on DASD
+         JE    LMOVECHKMIG         Br if so
+         LA    0,DSNAME            Setup for IKJEFF02
+         ST    0,MTINSRT
+         MVI   MTINSRT,L'DSNAME
+         L     0,=C'MS02'          Load the message ID
+*        ST    0,MTMSGID           Store it for IKJEFF02
+         BRAS  14,PUTMSG           Write the message
+         J     EXIT
+LMOVECHKMIG CLC =C'MIGRAT',CATVSER Test if data set is migrated
+         JNE   LMOVEOK             Br if not
+         LA    0,DSNAME            Setup for IKJEFF02
+         ST    0,MTINSRT
+         MVI   MTINSRT,L'DSNAME
+         L     0,=C'MS03'          Load the message ID
+*        ST    0,MTMSGID           Store it for IKJEFF02
+         BRAS  14,PUTMSG           Write the message
+         J     EXIT
+LMOVEOK  LHI   0,6                 Load r=the length
+         STCM  0,B'0011',AVOL-A+ALLOCPRM-2  Store the length
+         MVC   AVOL-A+ALLOCPRM,CATVSER  Copy the volume serial to the ->
+                                         DYNALLOC parm list
+ALLOC    NI    SWITCH,255-SWERROR  Reset the error flag
+         BRAS  14,DYNALLOC         Allocate the volume
+         TM    SWITCH,SWERROR      Test if error
+         JO    EXIT                Br if so
+         LA    0,ARVOL-A+ALLOCPRM  Setup for AVM001I
+         ST    0,MTINSRTS
+         ICM   0,B'0011',ARVOL-A+ALLOCPRM-2
+         STC   0,MTINSRTS
+         LA    0,ARDDN-A+ALLOCPRM
+         ST    0,MTINSRTS+4
+         ICM   0,B'0011',ARDDN-A+ALLOCPRM-2
+         STC   0,MTINSRTS+4
+         L     0,=C'MS01'          Load the message ID
+*        ST    0,MTMSGID           Store it for IKJEFF02
+         BRAS  14,PUTMSG           Write the message
+* Now build the CLIST/Rexx variables
+         L     2,CVTPTR            Load the address of the CVT
+         L     2,CVTTVT-CVTMAP(,2) Load address of the TSO vector table
+         ICM   2,B'1111',TSVTVACC-TSVT(2)  Load address of IKJCT441
+         JZ    EXIT                Exit if IKJCT441 not in TSO vector
+         LA    0,ARVOL-A+ALLOCPRM
+         ST    0,VVADDR
+         SR    1,1
+         ICM   1,B'0011',ARVOL-A+ALLOCPRM-2
+         ST    1,VVLEN
+* Build the ALLOCVOL variable
+         LR    15,2
+         CALL  (15),(=A(TSVEUPDT),=A(NAME1),=A(L'NAME1),VVADDR,VVLEN,VT>
+               OKEN),VL,MF=(E,VPARM)
+         LTR   15,15
+         JNZ   EXIT
+         SR    1,1
+         ICM   1,B'0011',ARDDN-A+ALLOCPRM-2
+         ST    1,VVLEN
+         LA    0,ARDDN-A+ALLOCPRM
+         ST    0,VVADDR
+* Build the ALLOCDD variable
+         LR    15,2
+         CALL  (15),(=A(TSVEUPDT),=A(NAME2),=A(L'NAME2),VVADDR,VVLEN,VT>
+               OKEN),VL,MF=(E,VPARM)
+         NOPR  0
+EXIT     IKJRLSA PDLPTR            Free the PDL
+         SR    10,10               Set the return code
+         TM    SWITCH,SWERROR      Test if error
+         JZ    EXITOK              Br if no error
+         TCLEARQ INPUT             Delete stacked commands
+         MVC   STACKPB,MASTSTACK   Terminate the current CLIST or     ->
+                                    Rexx EXEC
+         STACK MF=(E,MYIOPL),PARM=STACKPB,ENTRY=(15)
+         ORG   *-2
+         LINK  SF=(E,CALLSTCK),MF=(E,(1))
+         LHI   10,20               Set RC = 20
+EXITOK   L     13,4(,13)           Load addr of the previous save area
+         LHI   0,WALEN             Load the work area length
+         FREEMAIN RU,LV=(0),A=(11) Free the work area
+         LR    15,10               Copy the return code to reg 15
+         RETURN (14,12),T,RC=(15)  Restore regs & return
+         EJECT
+         CNOP  0,8
+PUTMSG   BASR  15,0                Store current address in reg 15
+         SAVE  (14,1),,PUTMSG      Save registers
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add new save are to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish new save area pointer
+         ST    0,MTMSGID           Store the message ID
+         LINK  SF=(E,CALLFF02),MF=(E,MTPARML)  Write the message
+         L     13,4(,13)           Load addr of the previous save area
+         RETURN (14,1),T           Restore registers & return
+         EJECT
+         CNOP  0,8
+DYNALLOC BASR  15,0                Store current address in reg 15
+         SAVE  (14,12),,DYNALLOC   Save the registers
+         LA    15,72(,13)          Compute addr of the next save area
+         ST    13,4(,15)           Add the new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Establish the new save area pointer
+         LA    1,ALLOCPRM          Load addr of the request block
+         BRAS  14,DYNRELOC         Relocate the address offsets
+         DYNALLOC ,                Do the dynamic allocation
+         LTR   15,15               Test DYNALLOC RC
+         JZ    DYNAEXIT            Br if RC = 0
+         L     1,ALLOCPRM          Load address of the request block
+         CLI   S99VERB-S99RB(1),S99VRBUN  Test if unallocate request
+         JNE   DYNMSG              Br if not unallocate request
+         CHI   15,4                Test if DYNALLOC RC = 4
+         JNE   DYNMSG              Br if not RC = 4
+         CLC   =X'0438',S99ERROR-S99RB(1)  Test if DD statement not   ->
+                                            found error
+         JE    DYNAEXIT            Ignore DD statement not found
+DYNMSG   ST    1,DFS99RBP          Store the RB address for DAIRFAIL
+         ST    15,DYNRC            Store the RC for DAIRFAIL
+         LINK  SF=(E,CALLDF),MF=(E,DFPARMS)  Call DAIRFAIL
+         OI    SWITCH,SWERROR      Indicate error encountered
+DYNAEXIT L     13,4(,13)           Load addr of the previous save area
+         RETURN (14,1),T           Restore regs & return
+         EJECT
+CALLPARS LINK  SF=L,EP=IKJPARS
+CALLDF   LINK  SF=L,EP=IKJEFF18
+CALLFF02 LINK  SF=L,EP=IKJEFF02
+CALLSTCK LINK  SF=L,EP=IKJSTCK
+MASTSTACK STACK MF=L,DELETE=PROC
+MASTCAMLST CAMLST NAME,*-*,,*-*
+         SPACE 5
+A        DC    A(X'80000000'+(ARB-A))
+ARB      DC    AL1(S99RBEND-S99RB,S99VRBAL,S99NOCNV+S99NOMNT,0)
+         DC    2AL2(0)
+         DC    A(ATXTPP-A)
+         DC    2A(0)
+ATXTPP   DC    A(ATXT01-A,ATXT02-A,ATXT03-A,ATXT04-A,ATXT05-A,ATXT06-A,>
+               X'80000000'+(ATXT07-A))
+ATXT01   DC    AL2(DALUNIT,1,L'AUNIT)
+AUNIT    DC    C'SYSALLDA'
+ATXT02   DC    AL2(DALVLSER,1,*-*)
+AVOL     DC    CL6' '
+ATXT03   DC    AL2(DALSTATS,1,1),X'08'
+ATXT04   DC    AL2(DALRTVOL,1,L'ARVOL)
+ARVOL    DC    CL6' '
+ATXT05   DC    AL2(DALRTDDN,1,L'ARDDN)
+ARDDN    DC    CL8' '
+ATXT06   DC    AL2(0,1,L'ADDN)
+ADDN     DC    CL8' '
+ATXT07   DC    AL2(DALPERMA,0)
+AL       EQU   *-A
+         SPACE 5
+U        DC    A(X'80000000'+(URB-U))
+URB      DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0),2AL2(0),A(UTXTPP-U,0,0)
+UTXTPP   DC    A(UTXT01-U,X'80000000'+(UTXT02-U))
+UTXT01   DC    AL2(DUNDDNAM,1,L'UDDN)
+UDDN     DC    CL8' '
+UTXT02   DC    AL2(DUNUNALC,0)
+UL       EQU   *-U
+         SPACE 5
+* Dummy command line.  This image represents a TSO command line
+* with no operands after IKJSCAN has extracted the command name.
+CMD      DC    AL2(5,1),C'Z'
+* Clist / Rexx variable names
+NAME1    DC    C'ALLOCVOL'
+NAME2    DC    C'ALLOCDD'
+         DC    0D'0'
+         LTORG ,
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- Translate address offsets in a coded        *
+*   dynamic allocation parameter list to true addresses               *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V3L0 -- April 2010                                                *
+*                                                                     *
+* Example Calling Sequence --                                         *
+*   ----+----1----+----2----+----3----+----4----+----5----+----6      *
+*            LA    1,DYNPARMS                                         *
+*            BRAS  14,DYNRELOC                                        *
+*            ...                                                      *
+*   DYNPARMS DC    A(X'80000000'+(RB-DYNPARMS))                       *
+*   RB       DC    AL1(S99RBEND-S99RB,S99VRBAL,0,0),2AL2(0)           *
+*            DC    A(TUP001-DYNPARMS)                                 *
+*            DC    2A(0)                                              *
+*   TUP001   DC    A(TU001-DYNPARMS)                                  *
+*            DC    A(TU002-DYNPARMS)                                  *
+*            DC    A(TU003-DYNPARMS)                                  *
+*            DC    A(X'800000000'+(TU004-DYNPARMS))                   *
+*   TU001    DC    AL2(DALDSNAM,1,L'DSN)                              *
+*   DSN      DC    C'SYS1.MACLIB'                                     *
+*   TU002    DC    AL2(DALSTATS,1,1),AL1(8)                           *
+*   TU003    DC    AL2(DALRTORG,1,2),AL2(0)                           *
+*   TU004    DC    AL2(DALRTDDN,1,8),CL8' '                           *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+         DC    0D'0'
+         PUSH  USING
+         DROP  ,                   KILL ANY CURRENT USING
+DYNRELOC BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         USING *,12                ESTABLISH ADDRESSABILITY
+         SAVE  (14,12),,DYNRELOC   SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY ADDRESS OF THE RB POINTER TO  ->
+                                    REG 2
+         L     3,0(,1)             LOAD OFFSET OF THE REQUEST BLOCK
+         ALR   3,2                 COMPUTE THE REQUEST BLOCK ADDRESS
+         ST    3,0(,1)             STORE THE REQUEST BLOCK ADDRESS
+         USING S99RB,3             ESTABLISH S99RB ADDRESSABILITY
+         L     4,S99TXTPP          LOAD OFFSET OF THE FIRST TEXT      ->
+                                    UNIT POINTER
+         ALR   4,2                 COMPUTE ADDRESS OF THE TEXT UNIT   ->
+                                    POINTER
+         ST    4,S99TXTPP          STORE ITS ADDRESS IN THE S99RB
+DYNR0100 L     15,0(,4)            LOAD OFFSET OF A TEXT UNIT POINTER
+         LR    14,15               COPY OFFSET TO REG 14
+         N     14,DYNR0300         REMOVE THE VL BIT
+         JZ    DYNR0200            BR IF NO POINTER IN THE POSITION
+         ALR   15,2                COMPUTE ADDRESS OF THE TEXT UNIT
+         ST    15,0(,4)            STORE TEXT UNIT ADDRESS IN THE     ->
+                                    TEXT UNIT POINTER
+DYNR0200 TM    0(4),X'80'          TEST IF LAST TEXT UNIT POINTER
+         LA    4,4(,4)             COMPUTE ADDRESS OF THE NEXT TEXT   ->
+                                    UNIT POINTER
+         JZ    DYNR0100            BR IF NOT THE LAST TEXT UNIT POINTER
+         RETURN (14,12),T          RESTORE REGISTERS & RETURN TO CALLER
+DYNR0300 DC    A(X'7FFFFFFF')      MASK TO REMOVE THE VL BIT
+         POP   USING               RESTORE PREVIOUS USING
+*        IEFZB4D0 ,
+*        IEFAB4D2 ,
+         DC    0D'0'
+         SPACE 5
+AVMSGS   CSECT
+         IKJTSMSG ('AVM001I VOLUME ',,' ALLOCATED TO FILE ',),MS01
+         IKJTSMSG ('AVM002E DATA SET ',,' IS NOT ON DASD!'),MS02
+         IKJTSMSG ('AVM003E DATA SET ',,' IS MIGRATED!'),MS03
+         IKJTSMSG ('AVM004E DATA SET ',,' IS NOT CATALOGED!'),MS04
+         IKJTSMSG ('AVM005I REUSE OPTION SPECIFIED, BUT THE FILE OPTION>
+                IS NOT SPECIFIED!'),MS05
+         IKJTSMSG ,
+         DC    0D'0'
+         END   ALLOCVOL

@@ -1,0 +1,261 @@
+INVCP    TITLE '                          Call a Command Processor In A>
+                Private Library'
+***********************************************************************
+*                                                                     *
+* Title -- INVCP                                                      *
+*                                                                     *
+* Function / Operation -- INVCP is a TSO command processor used to    *
+*   invoke another program that is in the linklist or a private       *
+*   library as a command processor.  The private library is defined   *
+*   by a DD statement with DD name USERLIB.  The library can also     *
+*   be allocated with the TSO ALLOCATE command.                       *
+*                                                                     *
+* Command Line --                                                     *
+*   INVCP  command-name  parameters                                   *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V2L0 -- July 2010                                                 *
+*    - INVCP updated to support residence above the line.  INVCP can  *
+*      call AMODE 24 commands.                                        *
+*                                                                     *
+* Attributes -- INVCP is reenterable, refreshable and reusable.  It   *
+*   operates in problem state and problem key, in task mode, as a     *
+*   TSO command.  The command-name is converted to upper case; the    *
+*   remainder of the command line is not altered in any way.  INVCP   *
+*   uses no APF restricted system functions, and it cannot be used    *
+*   to invoke commands that require APF restricted functions.  INVCP  *
+*   opens the USERLIB private library if it is present for input;     *
+*   the user running INVCP must be authorized to access the library.  *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+INVCP    RSECT                     DEFINE THE CSECT
+INVCP    AMODE 31                  DEFINE THE AMODE
+INVCP    RMODE 31                  DEFINE THE RMODE
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJTCB ,                  DEFINE TCB SYMBOLS
+         DCBD  DSORG=PO,DEVD=DA    DEFINE DCB SYMBOLS
+         IKJCPPL ,                 DEFINE THE CPPL
+$$$$CPPL EQU   *-CPPL
+         IKJCSOA                   DEFINE THE COMMAND SCAN OUTPUT AREA
+$$$$CSOA EQU   *-CSOA
+         IKJECT ,                  DEFINE THE TSO ENVIRONMENT CONTROL ->
+                                    TABLE
+* THE TSO COMMAND SCAN PARAMETER LIST DEFINES THE START OF THE INVCP
+* WORK AREA, WHICH CAN BE REGARDED AS AN EXTENSION OF THE CSPL.
+         IKJCSPL
+WORKAREA EQU   CSPL
+SAVEAREA DS    (2*9)D              DEFINE 2 OS/360 SAVE AREAS
+PGM      DS    CL8                 PROGRAM NAME TO INVOKE
+SAVESCMD DS    CL(L'ECTSCMD)
+THECPPL  DS    XL($$$$CPPL)        THE CPPL USED TO CALL THE PROGRAM
+ATTPARMS ATTACH EPLOC=*-*,SHSPV=78,SF=L,SZERO=NO
+         ORG   ATTPARMS
+         ATTACH EPLOC=*-*,SHSPV=78,SF=L,TASKLIB=*-*,SZERO=NO
+         ORG   ,
+ATTPARM  EQU   ATTPARMS,*-ATTPARMS ATTACH PARAMETER LIST
+         IKJEFFMT MTDSECT=NO,MTFORMAT=NEW  IKJEFF02 PARAMETER LIST    ->
+                                            PARAMETER DATA
+TASKLIBS DCB   DSORG=PO,MACRF=R,DDNAME=USERLIB
+         ORG   ,
+TASKLIB  EQU   TASKLIBS,*-TASKLIBS  DCB AREA USED AS A TASKLIB FOR    ->
+                                     THE ATTACH MACRO
+OPARMS   OPEN  (*-*,INPUT),MF=L
+OPARM    EQU   OPARMS,*-OPARMS     OPEN PARAMETER LIST USED TO OPEN   ->
+                                    THE TASKLIB DCB
+         ORG   OPARM
+CPARMS   CLOSE *-*,MF=L
+CPARM    EQU   CPARMS,*-CPARMS     CLOSE PARAMETER LIST
+         ORG   ,
+SCANFLAG DS    F                   IKJSCAN FLAGS
+THETCB   DS    F                   ADDRESS OF THE COMMAND TCB
+ECB      DS    F,0D                EVENT CONTROL BLOCK FOR IKJSCAN,   ->
+                                    IKJEFF02 AND THE COMMAND PROCESSOR
+MYCSOA   DS    XL($$$$CSOA),0D     IKJSCAN COMMAND SCAN OUTPUT AREA
+CMDLINE  DS    2AL2,CL256          COMMAND LINE
+         DS    0D
+WALEN    EQU   *-WORKAREA          LENGTH OF THE INVCP WORK AREA
+         POP   PRINT
+         EJECT
+INVCP    RSECT                     RETURN TO THE INVCP CSECT
+         USING CPPL,2              ESTABLISH CPPL ADDRESSABILITY
+         USING WORKAREA,11         ESTABLISH WORK AREA ADDRESSABILITY
+         USING CSOA,MYCSOA         ESTABLISH CSOA ADDRESSABILITY
+         USING IHADCB,TASKLIB      ESTABLISH DCB ADDRESSABILITY
+         USING *,12                ESTABLISH INVCP ADDRESSABILITY
+         SAVE  (14,12),,INVCP-V2L0-&SYSDATE-&SYSTIME  SAVE REGISTERS
+         LR    12,15               COPY ENTRY POINT ADDRESS TO REG 12
+         LR    2,1                 COPY THE CPPL ADDRESS TO REG 2
+         LHI   5,WALEN             LOAD LENGTH OF THE WORK AREA
+         GETMAIN RU,LV=(5),LOC=(24,ANY),SP=1   ALLOCATE A WORK AREA   ->
+                                                BELOW THE LINE
+         LR    4,1                 COPY THE WORKAREA ADDRESS TO REG 4
+         LR    11,1                  AND REG 11
+         SR    15,15               SET REG 15 = 0
+         MVCL  4,14                CLEAR THE WORK AREA
+         LA    15,SAVEAREA         LOAD ADDRESS OF THE NEW SAVE AREA
+         ST    15,8(,13)           ADD THE NEW SAVE AREA TO THE
+         ST    13,4(,15)            SAVE AREA CHAIN
+         LR    13,15               ESTABLISH THE NEW SAVE AREA ADDRESS
+         MVC   TASKLIB,TASKLIBM    INITIALIZE THE TASKLIB DCB
+         L     4,CPPLCBUF          LOAD THE ADDRESS OF THE COMMAND    ->
+                                    BUFFER
+         LH    5,0(,4)             LOAD THE LENGTH
+         LH    1,2(,4)             LOAD OFFSET OF THE FIRST OPERAND
+         AR    5,4                 COMPUTE THE END OF THE COMMAND     ->
+                                    BUFFER
+         LA    4,4(1,4)            COMPUTE START OF TEXT IN THE       ->
+                                    COMMAND BUFFER
+         SR    5,4                 COMPUTE LENGTH OF TEXT
+         LA    0,4(,5)             ADD THE LENGTH OF THE RDW
+         STH   0,CMDLINE           STORE THE LENGTH
+         LA    14,CMDLINE+4        LOAD START OF MY COMMAND LINE
+         LR    15,5                COPY THE TEXT LENGTH TO REG 15
+         MVCL  14,4                COPY THE COMMAND TEXT TO MY        ->
+                                    COMMAND LINE
+         LA    0,CMDLINE           LOAD ADDR OF MY COMMAND BUFFER
+         ST    0,CSPLCBUF          STORE IT IN THE CSPL
+         LA    0,ECB               LOAD ADDR OF MY ECB
+         ST    0,CSPLECB           STORE IT IN THE CSPL
+         LA    0,SCANFLAG
+         ST    0,CSPLFLG
+         L     0,CPPLUPT           LOAD ADDRESS OF THE UPT
+         ST    0,CSPLUPT           STORE IT FOR IKJSCAN
+         L     0,CPPLECT           LOAD ADDRESS OF THE ECT
+         ST    0,CSPLECT           STORE IT FOR IKJSCAN
+         LA    0,MYCSOA            LOAD ADDR OF MY CSOA
+         ST    0,CSPLOA            STORE IT FOR IKJSCAN
+         LINK  SF=(E,CALLSCAN),MF=(E,CSPL)  CALL IKJSCAN
+         LTR   15,15               TEST THE RETURN CODE
+         JZ    *+L'*+2             BR IF OK
+         DC    H'0'                ABEND IF INVALID PARMS
+         L     0,=C'MS03'          LOAD MSG CODE
+         TM    CSOAFLG,CSOAQM      TEST IF ?
+         JZ    CHKNAME             BR IF NOT
+         BRAS  14,GENMSG           WRITE THE MESSAGE
+         LHI   10,16               LOAD THE RETURN CODE
+         J     EXIT                AND EXIT
+CHKNAME  L     0,=C'MS01'          LOAD MSG CODE
+         TM    CSOAFLG,CSOAVWP+CSOAVNP  TEST IF VALID
+         JNZ   CHKCLIST            BR IF SO
+         BRAS  14,GENMSG           WRITE THE MESSAGE
+         LHI   10,16               LOAD THE RETURN CODE
+         J     EXIT                AND EXIT
+CHKCLIST L     0,=C'MS02'          LOAD MSG CODE
+         TM    CSOAFLG,CSOAEXEC    TEST IF IMPLICIT CLIST CALL
+         JZ    CHKTASK             BR IF NOT
+         BRAS  14,GENMSG           WRITE THE MESSAGE
+         LHI   10,16               LOAD THE RETURN CODE
+         J     EXIT                AND EXIT
+CHKTASK  DEVTYPE DCBDDNAM,16(13)   TEST IF TASKLIB DD PRESENT
+         LTR   15,15               TEST RC FROM DEVTYPE
+         JNZ   NOTASKLB            BR IF NOT
+         MVC   OPARM,MASTOPEN      COPY THE MASTER OPEN PARM LIST TO  ->
+                                    THE WORK AREA
+         OPEN  TASKLIB,MF=(E,OPARM)  OPEN THE TASK LIB
+         TM    DCBOFLGS,DCBOFOPN   VERIFY THE TASK LIB IS OPEN
+         JZ    NOTASKLB            BR IF NOT
+         MVC   ATTPARM,ATTACHP2    COPY THE MASTER ATTACH PARM LIST   ->
+                                    TO THE WORK AREA
+         BRAS  14,INITCPPL         INITIALIZE THE CPPL, ECT & PROGRAM
+         ATTACH EPLOC=PGM,ECB=ECB,MF=(E,THECPPL),TASKLIB=TASKLIB,     ->
+               SF=(E,ATTPARM)
+         J     WAITTASK            WAIT FOR THE COMMAND TO COMPLETE
+NOTASKLB MVC   ATTPARM,ATTACHP1    COPY THE MASTER ATTACH PARM LIST   ->
+                                    TO THE WORK AREA
+         BRAS  14,INITCPPL         INITIALIZE THE CPPL, ECT & PROGRAM
+         ATTACH EPLOC=PGM,ECB=ECB,MF=(E,THECPPL),                     ->
+               SF=(E,ATTPARM)
+WAITTASK ST    1,THETCB            SAVE THE TCB ADDRESS
+         WAIT  1,ECB=ECB           WAIT FOR THE COMMAND TO COMPLETE
+         L     1,THETCB            LOAD THE TCB ADDRESS
+         L     10,TCBCMP-TCB(,1)   LOAD THE COMPLETION CODE
+         N     10,=A(X'FFF')       ISOLATE THE RETURN CODE
+         DETACH THETCB             COMPLETE PROCESSING THE SUBTASK
+         L     1,CPPLECT           LOAD THE ADDRESS OF THE ECT
+         MVC   ECTSCMD-ECT(,1),SAVESCMD  RESTORE ECTSCMD
+EXIT     TM    DCBOFLGS,DCBOFOPN   TEST IF THE TASKLIB DCB IS OPEN
+         JZ    SKIPCLOS            BR IF NOT
+         MVC   CPARM,MASTCLOS      COPY THE MASTER CLOSE PARM LIST    ->
+                                    TO THE WORK AREA
+         CLOSE TASKLIB,MF=(E,CPARM)  CLOSE THE TASKLIB
+SKIPCLOS L     13,4(,13)           LOAD THE ADDRESS OF THE PREVIOUS   ->
+                                    SAVE AREA
+         LHI   0,WALEN             LOAD THE LENGTH OF THE WORK AREA
+         FREEMAIN RU,LV=(0),A=(11),SP=1  FREE THE WORK AREA
+         LR    15,10               COPY THE RETURN CODE TO REG 15
+         RETURN (14,12),T,RC=(15)  RESTORE REGISTERS & RETURN
+         EJECT
+         CNOP  0,8
+INITCPPL BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,1),,GENMSG      SAVE LINK REGS
+         MVC   THECPPL,0(2)        COPY THE ORIGINAL CPPL TO MY COPY
+         LA    0,CMDLINE           LOAD ADDRESS OF MY COMMAND LINE
+         ST    0,CPPLCBUF-CPPL+THECPPL  STORE THE ADDRESS IN THE CPPL ->
+                                         WE'RE SENDING TO THE COMMAND
+         LH    1,CSOALNM           LOAD THE LENGTH OF THE COMMAND     ->
+                                    FROM IKJSCAN
+         L     0,CSOACNM           LOAD ADDR OF THE COMMAND NAME
+         ICM   1,B'1000',=C' '     LOAD THE FILL CHARACTER
+         LA    14,PGM              LOAD ADDRESS OF THE PROGRAM NAME
+         LHI   15,L'PGM            LOAD THE LENGTH OF THE PROGRAM NAME
+         MVCL  14,0                COPY THE PROGRAM NAME TO THE WORK  ->
+                                    AREA
+         L     1,CPPLECT-CPPL(,2)  LOAD THE ADDRESS OF THE ECT
+         MVC   SAVESCMD,ECTSCMD-ECT(1)  SAVE THE CONTENTS OF ECTSCMD
+         MVC   ECTSCMD-ECT(,1),PGM COPY THE PROGRAM NAME AS THE SUB-  ->
+                                    COMMAND NAME
+         MVI   ECB,0               CLEAR THE ECB
+         RETURN (14,1),T           RESTORE REGISTERS & RETURN
+         EJECT
+         CNOP  0,8
+GENMSG   BASR  15,0                STORE CURRENT ADDRESS IN REG 15
+         SAVE  (14,1),,GENMSG      SAVE LINK REGS
+         LA    15,72(,13)          COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    15,8(,13)           ADD NEW SAVE AREA TO THE
+         ST    13,4(,15)           SAVE AREA CHAIN
+         LR    13,15               ESTABLISH NEW SAVE AREA ADDRESS
+         ST    2,MTCPPLP           STORE CPPL ADDRESS IN THE          ->
+                                    IKJEFF02 PARM LIST
+         ST    0,MTMSGID           STORE THE MSG ID
+         LA    0,ECB               LOAD ADDRESS OF THE ECB
+         ST    0,MTECBP            STORE ECB ADDRESS IN THE           ->
+                                    IKJEFF02 PARM LIST
+         LA    0,MTCSECTP          LOAD ADDR OF THE IKJEFF02 PARM     ->
+                                    DATA AREA
+         ST    0,MTPLPTR           STORE IN THE                       ->
+                                    IKJEFF02 PARM LIST
+         LA    0,MSGS              LOAD ADDRESS OF THE IKJEFF02       ->
+                                    MESSAGE SKELETONS
+         ST    0,MTCSECTP          STORE ADDRESS IN THE IKJEFF02      ->
+                                    IKJEFF02 PARM LIST
+         MVI   MTSW1,MTPUTLSW      INDICATE MESSAGE ISSUED BY PUTLINE
+         MVI   MTSW2,MTFMT         INDICATE NEW FORMAT PARM LIST
+         LINK  SF=(E,CALLFF02),MF=(E,MTPARML)  ISSUE THE MSG
+         L     13,4(,13)           LOAD ADDR OF THE PREVIOUS SAVE AREA
+         RETURN (14,1),T,RC=(15)   RESTORE REGS & RETURN W/ RC FROM   ->
+                                    IKJEFF02
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+CALLSCAN LINK  SF=L,EP=IKJSCAN
+CALLFF02 LINK  SF=L,EP=IKJEFF02
+TASKLIBM DCB   DSORG=PO,MACRF=R,DDNAME=USERLIB
+ATTACHP1 ATTACH SF=L,EPLOC=*-*,SHSPV=78,SZERO=NO
+ATTACHP2 ATTACH SF=L,EPLOC=*-*,SHSPV=78,SZERO=NO,TASKLIB=*-*
+MASTOPEN OPEN  (*-*,INPUT),MF=L
+MASTCLOS CLOSE *-*,MF=L
+         POP   PRINT
+         DC    0D'0'
+         LTORG ,
+MSGS     DC    0D'0'
+         IKJTSMSG ('INVCP01E NO COMMAND NAME PROVIDED, OR THE COMMAND N>
+               AME IS INVALID'),MS01
+         IKJTSMSG ('INVCP02E THE COMMAND NAME IS FOR AN IMPLICIT REXX E>
+               XEC OR CLIST, WHICH IS NOT SUPPORTED BY INVCP'),MS02
+         IKJTSMSG ('INVCP03E COMMAND NAME ''?'' IS NOT SUPPORTED BY INV>
+               CP'),MS03
+         IKJTSMSG ,
+         DC    0D'0'
+         END   INVCP

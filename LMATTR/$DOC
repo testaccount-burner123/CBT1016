@@ -1,0 +1,134 @@
+LMATTR is a TSO line mode command that displays a module map of
+load modules in a format suitable for a TSO terminal.  For example -
+
+lmattr lmattr.load(lmattr)
+ SMYERS.LMATTR.LOAD(LMATTR)  EXECUTABLE,RENT,REFR,REUS,F-LEVEL,
+SIZE=2CA8,EP=0,AC=0,RMODE=24,AMODE=24
+ MODULE LINKED BY 5695PMB01 ON 08/03/21
+   NAME   TYPE MODE     ADDR LENGTH    NAME   MODE     ADDR OFFSET
+ LMATTR    SD   22         0   1990
+ MSGS      SD   22      1990     F8
+ MAINPCL   SD   22      1A88    106
+ DSNPCL    SD   22      1B90     3A
+ QSORTS    SD   A3R     1BD0    208  QSORT     ANY     1C08     38
+                                     QSORTL    ANY     1CB8     E8
+ FORMATR   SD   A3      1DD8    ECE  FORMATAB  ANY     1E10     38
+                                     FORMATMS  ANY     2598    7C0
+
+The MODE column displays the addressing mode (AMODE) of the
+module, followed by its residency mode (RMODE) followed by R if
+the module is defined by the RSECT Assembler instruction.  These
+codes are used: A AMODE ANY, 6 AMODE 64, 3 AMODE 31, 2 AMODE 24.
+Entry points show theirs relative AMODE, and its offset rlative
+to the load module and within the module.  For example, QSORT is
+an entry point in the QSORTS module, with AMODE ANY, and at
+offset 1C08 in the load module or 38 in QSORTS.
+
+The module summary data shows aliases -
+
+  SMYERS.LOAD(XI)  EXECUTABLE,RENT,REFR,REUS,F-LEVEL,SIZE=470,EP=60,
+AC=0,RMODE=ANY,AMODE=31
+ ALIASES -- XIN,XINP,*XI22
+
+Since the command specified an alias rather than the primary
+member name, LMATTR shows the primary name and marks it with a *
+to separate it from the alias names.
+
+Syntax -
+  LMATTR  'dslist'  MAP/NOMAP  VOL('volume serial')
+          BASE('module address in storage')
+
+  Required - dslist
+  Default - MAP
+
+  DSLIST - One or more data set names with a member name.  If the
+    member name is not specified, LMATTR sttempts to use TEMPNAME
+    as a member name.
+  MAP - Generate the module map
+  NOMAP - Do not generate the module map; only the first line with
+  VOLUME - Specify the volume serial of the volume where the
+    data set is located.  If the data set is cataloged on an
+    SMS managed volume, the VOL parameter is ignored and the
+    data set on the volume where the data set is cataloged is used
+    by LMATTR.
+  BASE - Specify the address in storage where the module is loaded.
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This memeber.
+LMATTR   - Help data for SYS1.HELP.
+LINK     - Binder control statemens used to prepare the LMATTR
+           load module.
+OBJECT   - Binary object decks of the LMATTR, FORMATR and QSORTS
+           modules.
+SOURCE   - Source statements for the LMATTR, FORMATR and QSORTS
+           modules.
+
+    P R E P A R I N G   T H E   L M A T T R   L O A D   M O D U L E
+
+The batch JCL or TSO commands that follow prepare the LMATTR load
+module in a new data set with data set nane userid.LMATTR.LOAD.
+Data set hlq.LMATTR.CBT.PDS represents this data set.  The
+usetid.LMATTR.LOAD data set is deleted and reallocated; in order
+to prepare LMATTR in a data set containinfg other programs remove
+the PREP step in the JCL or the DELETE command in the TSO
+commands, and update the SYSLMOD DD statement in the LINK step or
+the LOAD parameter in the TSO LINK command.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..LMATTR.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG,UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.LMATTR.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.LMATTR.CBT.PDS(LINK)
+
+TSO -
+
+DELETE LMATTR.LOAD
+LINK ('hlq.LMATTR.CBT.PDS(OBJECT)' 'hlq.LMATTR.CBT.PDS(LINK)')
+  LOAD(LMATTR)
+
+Enter the LINK command as a long character string in any
+environment or use the - or + characters to continue the command
+line in the READY prompt.
+
+                       T E S T I N G   L M A T T R
+
+In your TSO session, use the TSOLIB command or an equivalent
+facility command to make LMATTR available to TSO -
+
+TSOLIB ACTIVATE DATASET(LMATTR.LOAD)
+
+Then enter LMATTR as desceibed above.
+
+LMATTR runs in TSO in batch using JCL like this -
+
+//TSO     EXEC PGM=IKJEFT01
+//STEPLIB  DD  DISP=SHR,DSN=&SYSUID..LMATTR.LOAD
+//SYSTSPRT DD  SYSOUT=*
+//SYSTSIN  DD  *
+LMATTR LMATTR.LOAD(LMATTR)
+
+                   I N S T A L L I N G   L M A T T R
+
+Install LMATTR in any convenient LINKLST library.  Installation
+in LPA or MLPA is possible but not recommended as LMATTR resides
+below the 16 meg line.
+
+      S P E C I F I E D   O P E R A T I N G   E N V I R O N M E N T
+
+The QSORTL function in the QSORTS module, which is not used by
+LMATTR, uses the Test Addressing Mode instruction (TAM).  TAM was
+not avaiable in the very first z/Architecture systems, a
+programmer that attempts to carve out the QSORTS module from the
+SOURCE member should be aware of this issue.  These systems are
+no longer supported by IBM.
+
+Other than the TAM issue, the SPE includes architect level set 2,
+e.g., OS/390 Version 2 Release 10 and all z/OS systems.

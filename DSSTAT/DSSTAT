@@ -1,0 +1,24 @@
+* Help for DSSTAT command.  Copy this member to your SYS1.HELP data set
+)F Function -
+  Use the DSSTAT commabd to dispay data set attributes
+)X Syntax -
+  DSSTAT  'dslist'  RECALL/NORECALL  MEMBER/DIRSTAT  SQUISH  LABEL
+                    EXTENTS  VOLUME('vvvvvv')
+
+   Required - 'dslist'
+   Default - NORECALL
+)O OPERANDS -
+   'DSLIST' - Specify one or more data set names to obtain data set
+              attributes
+))RECALL -- Permit HSM or similar product to recall a data set it has
+            migrated.
+))NORECALL -- Do not recall a data set migrated by HSM or a similar
+              product
+))MEMBER -- List the members of a partitioned data set
+))SQUISH -- Print member list in a compacted format
+))DIRSTAT -- Print directory usage information for a partitioned
+             data set
+))LABEL -- Print contents of the Format 1, Format 2 and Format 3 DSCBs
+           in hexadecimal digits.
+))VOLUME('vvvvvv') -- Specify the volume serial of the volume where
+                      =xe data set is located

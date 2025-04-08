@@ -1,0 +1,14 @@
+Subject:  Replacement for file 1016
+From:     Steve Myers <mvsprog@yahoo.com>
+Date:     7/30/2021, 6:12 PM
+To:       Sam Golob <sbgolob@cbttape.org>
+
+Sam -
+
+SMYERS,TSOCMND.CBT.PDS
+
+One "new" command - LISTTSOU
+
+A significant update to DSSTAT to calculate used tracks in a PDSE
+data set by converting used pages to an estimate of used tracks.
+

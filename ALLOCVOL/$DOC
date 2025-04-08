@@ -1,0 +1,92 @@
+Use ALLOCVOL to "allocate" a volume similar to this DD statement:
+
+//ANYNAME  DD  DISP=OLD,VOL=SER=CBT004,UNIT=3390
+
+You can specify a data set name in the command line to simulate
+something like this:
+
+//ANYNAME  DD  DISP=OLD,VOL=REF=SYS1.LINKLIB
+
+The command syntax is -
+
+ALLOCVOL FILE('file name') REUSE
+VOLUME('volume serial')/DATASET('data set name')/DSNAME('data set name')
+
+Required - volume serial or data set name
+Optional - file name - The system assigns file name SYSnnnnn, where
+nnnnn is 5 numeric characters.
+
+Rexx / CLIST variables - ALLOCVOL creates Rexx or CLIST variables.
+Use these variable values to create utility control statements in
+Rexx or CLIST programs -
+
+Variable name
+ALLOCVOL - The volume allocated by ALLOCVOL.
+ALLOCDD  - The "file" name allocated by ALLOCVOL.
+
+As an example -
+
+PROC 1 DSN
+CONTROL LIST
+LISTDSI &DSN
+IF &LASTCC ¬= 0 THEN +
+ WRITE I CAN'T FIND &DSN
+ELSE +
+ DO
+  ALLOCVOL DA(&DSN)
+  ALLOC F(SYSPRINT) REUS DA(*)
+  ALLOCVOL DA(&DSN)
+  ALLOC F(SYSIN) REUS SP(1 1) TRA RECFM(F B) LRECL(80) BLKSIZE(800)
+  OPENFILE SYSIN OUTPUT
+  SET SYSIN = &STR( LISTPDS VOL=SYSALLDA=)&STR(&ALLOCVOL)+
+     &STR(,DSNAME=)&STR(&SYSDSNAME)
+  PUTFILE SYSIN
+  CLOSFILE SYSIN
+  CALL *(IEHLIST)
+  WRITE IEHLIST RC = &LASTCC
+  FREE FILE(&ALLOCDD)
+  ALLOC F(SYSIN) REUS DA(*)
+ END
+
+This little example was coded as a CLIST since TSO commands,
+ALLOCVOL and CALL, are a little more easily imbedded in a CLIST;
+Rexx would be similar, possibly clearer.  The SET SYSIN statement
+and the whole process to create the SYSIN data set for IEHLIST
+is as clear to the uninitiated as mud though the rest of it is
+pretty obvious.  The &SYSDSNAME symbol was created by the LISTDSI
+function.
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+MEMBER
+$DOC     - This member
+ALLOCVOL - The Assembler source for the ALLOCVOL TSO command
+LINK     - Binder control statements used to prepare the ALLOCVOL
+           load module
+OBJECT   - The object "deck" from assembling ALLOCVOL.
+
+  P R E P A R I N G   T H E   A L L O C V O L   L O A D   M O D U L E
+
+These examples prepare a userid.ALLOCVOL.LOAD data set.  If you
+choose to link ALLOCVOL into a data set with other programs,
+alter the JCL or TSO commands to meet your needs.  hlq.ALLOCVOL.CBT.PDS
+refers to this data set.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETTE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..ALLOCVOL.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYS0UT=*
+//SYSLMOD  DD  DISP=(,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.ALLOCVOL.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.ALLOCVOL.CBT.PDS(LINK)
+
+TSO -
+
+DELETE ALLOCVOL.LOAD
+LINK ('hlq.ALLOCVOL.CBT.PDS(ALLOCVOL)' 'hlq.ALLOCVOL.CBT.PDS(LINK)')
+RENT REFR REUS LOAD(ALLOCVOL)
+

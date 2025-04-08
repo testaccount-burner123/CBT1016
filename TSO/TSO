@@ -1,0 +1,135 @@
+TSO10    TITLE '  E X E C U T E   O N E   T S O   C O M M A N D   F R O>
+                M   T H E   C U R R E N T   C O M M A N D'
+***********************************************************************
+*                                                                     *
+* Title -- TSO                                                        *
+*                                                                     *
+* Function / Operation -- TSO is a command processor that allows a    *
+*   TSO user accustomed to using TSO xxx within ISPF to run a TSO line*
+*   mode command to use the same approach at the TSO READY prompt.    *
+*   In other words, TSO TIME is equivalent to entering TIME           *
+*                                                                     *
+* Attributes -- TSO is reenterable, refreshable and reusable.  It     *
+*   operates as a TSO command processor, in task mode, enabled,       *
+*   problem state and problem key.  It uses no APF restricted system  *
+*   functions and does not attempt to evade any integrity or data     *
+*   security function.                                                *
+*                                                                     *
+* Method of operation -- TSO removes the TSO command from the command *
+*   line, then uses the TSO STACK service to queue the altered        *
+*   command for later execution.                                      *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+TSO10    RSECT                     Define the command CSECT
+TSO10    AMODE 31
+TSO10    RMODE ANY
+         USING IOPL,11             Establish work area addressability
+         USING *,12                Establish command addressability
+         SAVE  (14,12),,TSO10-&SYSDATE-&SYSTIME  Save the registers
+         LR    12,15               Prepare the command base register
+         LM    6,9,0(1)            Load the CPPL into registers
+         LA    0,WASIZE            Load the size of the work area
+         GETMAIN R,LV=(0)          Allocate the work area
+         LR    11,1                Copy the work area address to reg 11
+         XC    0(WASIZE,1),0(1)    Clear the work area
+         LA    15,SAVEAREA        Load the address of the new save area
+         ST    13,SAVEAREA+4       Add the new save area to the
+         ST    15,8(,13)            save area chain
+         LR    13,15               Prepare the new save area pointer
+         MVC   STPBAREA,MSTPB      Initialize the STACK parameter block
+         LA    0,ECB               Initialize
+         ST    0,IOPLECB            the
+         ST    RECT,IOPLECT          IOPL
+         ST    RUPT,IOPLUPT
+         LH    1,2(,RCBUF)         Load the offset of the command to  ->
+                                    execute in the command line
+         LA    2,4(1,RCBUF)        Compute the address of the command ->
+                                    to execute in the command line
+         LH    3,0(,RCBUF)         Load the length of the command line
+         AR    3,RCBUF             Compute the address of the end of  ->
+                                    the command line
+         SR    3,2                 Compute the length of the command  ->
+                                    to execute
+         BP    GETLSD              Br if there is something there
+         XC    OLD,OLD             Make sure the O L D will be valid
+         MVC   OLD+4(8),=A(1,ERRM)
+         XC    PUTLPB,PUTLPB       Clear the PUTLINE parameter block
+         PUTLINE MF=(E,IOPL),ENTRY=CALLPUTL,PARM=PUTLPB,  Write the   ->
+               OUTPUT=(OLD,TERM,MULTLVL,INFOR)             error msg
+CALLPUTL L     15,CVTPTR           Load the address of the CVT
+         L     15,CVTPUTL-CVTMAP(,15)  Load the address of PUTLINE
+         CALL  (15),MF=(E,(1))     Call PUTLINE
+         B     EXIT
+GETLSD   LA    4,LSDSIZE+4+7(3)    Compute the length of the STACK    ->
+                                    LSD and the related command buffer
+         N     4,=F'-8'            Round the length to an 8 byte      ->
+                                    multiple
+         GETMAIN R,LV=(4),SP=LSDSP Allocate the LSD and its command   ->
+                                    buffer
+         ST    1,(STPBALSD-STPB)+STPBAREA  Store the LSD address in   ->
+                                            STACK parameter block
+         XC    0(LSDSIZE,1),0(1)   Clear the LSD
+         USING LSD,1               Establish LSD addressability
+         LA    14,LSDSIZE(,1)      Compute address of the command     ->
+                                    buffer
+         ST    14,LSDADATA         Store the command buffer address
+         ST    14,LSDANEXT          in the LSD
+         LA    0,4(,3)             Compute the length of the command  ->
+                                    buffer
+         STH   0,LSDTOTLN          Store it in the LSD
+         DROP  1
+         SLL   0,16                Convert the length to an RDW
+         ST    0,0(,14)            Store the RDW
+         LA    14,4(,14)           Compute the address of the command ->
+                                    text in the command buffer
+         LR    15,3                Copy the text length to reg 16
+         MVCL  14,2                Copy the command text to the       ->
+                                    command buffer
+         STACK MF=(E,IOPL),PARM=STPBAREA,ENTRY=CALLSTCK
+CALLSTCK L     15,CVTPTR
+         L     15,CVTSTCK-CVTMAP(,15)
+         CALL  (15),MF=(E,(1))
+EXIT     L     13,4(,13)
+         LA    0,WASIZE
+         FREEMAIN R,LV=(0),A=(11)
+         RETURN (14,12),RC=0
+         SPACE 1
+MSTPB    STACK MF=L,STORAGE=(*-*,PROCN,PROMPT)
+         SPACE 1
+ERRM     DC    AL2(ERRML,0),C'TSO001E NO TSO COMMAND IN THE TSO COMMAND>
+                LINE'
+ERRML    EQU   *-ERRM
+         DC    0D'0'
+         LTORG ,
+         DC    0D'0'
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJCPPL
+RCBUF    EQU   6+(CPPLCBUF-CPPL)/4
+RPSCB    EQU   6+(CPPLPSCB-CPPL)/4
+RUPT     EQU   6+(CPPLUPT-CPPL)/4
+RECT     EQU   6+(CPPLECT-CPPL)/4
+         SPACE 2
+         IKJSTPB
+         DS    0D
+STPSIZE  EQU   *-STPB
+         SPACE 2
+         IKJLSD
+         DS    0D
+LSDSIZE  EQU   *-LSD
+LSDSP    EQU   78
+         SPACE 2
+         IKJIOPL
+SAVEAREA DS    9D
+STPBAREA DS    XL(STPSIZE)
+OLD      DS    3A
+ECB      DS    F
+PUTLPBS  PUTLINE MF=L
+PUTLPB   EQU   PUTLPBS,*-PUTLPBS
+         DS    0D
+WASIZE   EQU   *-IOPL
+         SPACE 2
+         CVT   DSECT=YES
+         POP   PRINT
+         END   TSO10

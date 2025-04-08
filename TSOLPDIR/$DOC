@@ -1,0 +1,141 @@
+The TSOLPDIR (alias LISTPDS) program is a TSO line mode command
+processor that lists directory entries in a partitioned data set.
+
+Now you ask, what's the use of something like this when many
+partitioned data sets have thousands of members?  The truth of
+the matter is very, very few user partitioned data sets have more
+than 20 members, which will easily fit on the display screen of
+even early 3277 24 x 80 terminals, and most modern terminals have
+larger screens.  Users of the TSO SESSION product can easily
+scroll through even a lenghty directory listing.  Finally,
+TSOLPDIR runs fine in a TSO in batch enviroment, where it is a
+viable substitute for the ancient, and difficult to use in a
+modern environment, LISTPDS command in the IEHLIST utility.
+
+TSOLPDIR formats directory entries in a "dump" format similar to
+the output from IEHLIST.  Its default is to format load module
+directory entries similar to the way ISPF formats load module
+directory entries,  members with ISPF directory user statistics
+are formatted much like ISPF lists the statistics.  None of this
+>65535 stuff; TSOLPDIR displays record counts through 999999.
+
+For example:
+LISTPDS listpds.load
+ hlq.LISTPDS.LOAD ON vvvvvv
+ -MEMBER- --TTRC-- ALIAS OF -SIZE- -----ATTRIBUTES----- AM  RM  AC SSI
+ LISTPDS  000004B1 TSOLPDIR 0012D0 RN RU RF             31  ANY 00
+ TSOLPDIR 0000042C          0012D0 RN RU RF             31  ANY 00
+ 2 ALLOCATED DIRECTORY BLOCKS, 1 USED DIRECTORY BLOCKS
+
+listpds listpds.test.asm
+ hlq.LISTPDS.TEST.ASM ON vvvvvv
+ -MEMBER- --TTRC-- VV MM -IDATE- -IRECS- -MDATE- -MTIME--  -RECS- -USER-
+ TSOLPDIR 0000040F 01.00 27MAY21    1144 27MAY21 13:36:48    1144 xxxxxx
+ 2 ALLOCATED DIRECTORY BLOCKS, 1 USED DIRECTORY BLOCKS
+
+TSOLPDIR displays ISPF directory data on one line: dates are
+compacted to 7 bytes: ddmmmyy.  Since the year is displayed as 2
+bytes: TSOLPDIR is Y2K compatible, not Y2K compliant.
+
+TSOLPDIR carefully determines if the directory entry contains
+ISPF statistics or is a load module directory entry.  An ISPF
+directory entry contains 30 bytes (40 when the directory entry
+contains extended data) of user data.  In addition, TSOLPDIR
+verifies the date areas and time of day areas are valid.
+
+Contents of this data set:
+Member
+$DOC     This member
+LINK     Linkage Editor or Binder control statements used to
+         prepare the TSOLPDIR load module.
+TSOLPDIR (alias LISTPDS) Proposed SYS1.HELP data for the command.
+OBJECT   The object deck from asssembling the SOURCE member.
+SOURCE   The source statements for the TSOLPDIR command.
+
+************************* Installing TSOLPDIR **************************
+
+In this material 'hlq.TSOLPDIR.CBT.PDS' represents this data set.
+"This data set" is the data set retrieved from www.cbttape.org,
+expanded from the ZIP format, sent to your mainframe, and
+converted to a PDS using the TSO RECEIVE command.  Substitute the
+actual data set name you use in place of hlq.TSOLPDIR.CBT.PDS.
+
+Preparing a load module using the object "deck" in this data set
+
+At the TSO READY prompt (or ISPF option 6) enter the LINK command:
+
+LINK ('hlq.TSOLPDIR.CBT.PDS((OBJECT)' 'hlq.TSOLPDIR.CBT.PDS(LINK)') -
+RENT REFR REUS LOAD(TSOLPDIR)
+
+You can enter this as two lines with the - at the TSO READY
+prompt (the - at the end of the line indicates the line is
+continued) or as one long string without the - in TSO option 6.
+This command will generate a load module PDS
+userid.TSOLPDIR.LOAD.  You csn create the load module data set in
+batch by running JCL like this:
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..TSOLPDIR.LOAD
+//LINK    EXEC PGM=IEWL,PARM='LIST,RENT,REFR,REUS,MAP,XREF'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=&SYSUID..TSOLPDIR.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,VOL=REF=*.SYSLIN,
+//             DSN=&HLQ..TSOLPDIR.CBT.PDS(LINK)
+//SYSUT1   DD  UNIT=SYSDA,SPACE=(CYL,(1,1))
+
+The PREP step deletes an existing load module dsata set.  The LINK
+step allocates a new load module partitioned data set and binds
+(link edits) the TSOLPDIR ptogram object or load module.
+
+Testing the completed load module
+
+After you have created the load module partitioned data set you
+can test it by using the TSOLIB command to place the library in
+the program path for your system.  Use a TSOLIB command like
+this:
+
+TSOLIB ACTivate DAtaset(TSOLPDIR.LOAD)
+
+After you have activated the library, you can test the command
+using either the LISTPDS or TSOLPDIR command names.
+
+You can remove the library using
+
+TSOLIB DEActivate
+
+You can use alternatives to thhe TSOLIB command if your installation
+has installed them.
+
+Testing TSOLPDIR in TSO in batch
+
+Use a job strream like this:
+
+//TSTLPDIR EXEC PGM=IKJEFT01
+//STEPLIB   DD  DISP=SHR,DSN=&SYSUID..TSOLPDIR.LOAD
+//SYSTSPRT  DD  SYSOUT=*
+//SYSTSIN   DD *
+TSOLPDIR ('SYS1.LINKLIB' 'SYS1.CMDLIB')
+LISTPDS  ('SYS1.LINKLIB' 'SYS1.CMDLIB') DUMP
+
+Checking the help member
+
+Concatenate this data set to the libraries already allocated to
+the SYSHELP file.
+
+Then enter
+
+help tsolpdir
+
+Installing TSOLPDIR
+
+TSOLPDIR can be installed into your link list or LPA.  The load
+module is RMODE ANY; the system will load it above the 16 meg
+line.  The load module requires less than 5K.  If you install it
+in your link list, do not forget to refresh your LLA.
+
+Support
+
+Contact the author at mvsprog@yahoo.com

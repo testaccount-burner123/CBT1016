@@ -1,0 +1,2809 @@
+V1L3     TITLE '               Create an Image Dump of a Data Set in a ?
+               Format Suitable for TSO Browse'
+***********************************************************************
+*                                                                     *
+* Title -- IDUMP                                                      *
+*                                                                     *
+* Function / Operation -- IDUMP creates an image dump of a data set,  *
+*   or segments of a data set as specified by the TT or CCHH of       *
+*   one or more tracks, and stores it in a format suitable for        *
+*   printing or display by SPF browse, or a similar utility.          *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L3 -- October 2007                                              *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements -                                      *
+*     - Support for data sets containing more than 64K tracks         *
+*       With this support, programs that directly analyze the print   *
+*       output will fail; field widths for TT or TTR have been        *
+*       expanded as required to handle the larger relative track.     *
+*       "Large" format data sets are not supported on z/OS 1.6 and    *
+*       earlier MVS systems; IDUMP will automatically use the "old"   *
+*       interfaces.                                                   *
+*     Maintenance -                                                   *
+*     - Removed TRUETTRACK option                                     *
+*   V1L2 -- March 2005                                                *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements -                                      *
+*     - Add COMBINEKEY/NOCOMBINEKEY options.  When specified,         *
+*       COMBINEKEY directs IDUMP to display the key and data areas as *
+*       a single data area.  The default, NOCOMBINEKEY, displays the  *
+*       key and data areas as separate areas.  COMBINEKEY works best  *
+*       for VTOC output, NOCOMBINEKEY works well for all other        *
+*       data set types, including PDS directories.                    *
+*     Maintenance -                                                   *
+*     - Correct TT processing                                         *
+*   V1L1 -- June 2003                                                 *
+*     Functional Enhancements - None                                  *
+*     Incremental Improvements -                                      *
+*     - Added TRUETT operand to treat a 1 to 5 digit hex number as a  *
+*       "true track" rather than a relative track.  A true TT is      *
+*       translated to a CCHH as though it were relative to a data set *
+*       allocated starting on track 0                                 *
+*     - Added HA and R0 operands.  HA includes R0, unless NOR0 is     *
+*       explicitly specified.  HA dumps the contents of the home      *
+*       address, R0 dumps the contents of record 0.  These data areas *
+*       were standard in V1L0, but their output was sometimes         *
+*       confusing, so the capability was made optional.               *
+*     Maintenance -                                                   *
+*     - Minor documentation changes were made as required.            *
+*     - TT values are properly validated.                             *
+*     - Contents of message IDMP008E clarified by inserting keyword   *
+*       information.                                                  *
+*   V1L0 -- September 1999                                            *
+*                                                                     *
+* Command Line --                                                     *
+*                                                                     *
+*   IDUMP input-data-set-name                                         *
+*         MOD/EXTEND                                                  *
+*         PRINT(output-dataset)/LIST(output-dataset)/                 *
+*            OUTPUT(output-dataset)                                   *
+*         TT(low:high low:high ... )                                  *
+*         TRUETT(low:high low:high ... )    (*** deleted in v1l3 ***  *
+*         CCHH(low:high low:high ... )                                *
+*         VOL(xxxxxx)                                                 *
+*                                                                     *
+*     input-dataset-name -- The name of the input data set to dump.   *
+*       Specify 'VTOC', and a volume serial, to process the VTOC      *
+*       on the specified volume as the input data set.                *
+*     MOD/EXTEND -- Add the output to the output data set.  The       *
+*       contents of the output data set are replaced if MOD or        *
+*       EXTEND is not specified                                       *
+*     PRINT/LIST/OUTPUT -- Specify the name of the output data set.   *
+*       The default is userid.IDUMP.OUTPUT.                           *
+*     TT, TRUETT and CCHH -- Specify ranges, in the format of relative*
+*       track or CCHH, for areas within a data set to dump.  The      *
+*       ranges specified are sorted, combined if any overlap, and     *
+*       are processed in ascending order.  The specification of       *
+*       TT and CCHH ranges may extend over extent boundaries.  These  *
+*       ranges are expressed as tracks, rather tracks and number of   *
+*       tracks.  IDUMP converts the ranges to tracks and number of    *
+*       tracks.  The default is to dump the entire data set.          *
+*     VOL -- Specify the volume where the data set is located, if     *
+*       the data set is not cataloged                                 *
+*                                                                     *
+* Restrictions -                                                      *
+*   - The TRUETT operand supports 3390-27 devices, that is, devices   *
+*     with more than 64K tracks.  However, the maximum data set size  *
+*     is restricted to 64K tracks, regardless of its position on the  *
+*     volume.                                                         *
+*   - The CCHH and TRUETT operands must resolve to a location within  *
+*     the data set specified by the command line.                     *
+*   - A specification of CCHH(01230000:0122000) is valid provided     *
+*     the data set is allocated in multiple extents, and the extent   *
+*     with CCHH 01220000 is a higher relative extent than the extent  *
+*     with CCHH 01230000.  In other words, if the data set has two    *
+*     extents -                                                       *
+*       01230000 to 01230001                                          *
+*       01220000 to 0122000F                                          *
+*     CCHH(01230000:01220000) or its TRUETT equivalent is valid.      *
+*                                                                     *
+***********************************************************************
+         EJECT
+         MACRO
+         SETR
+         LCLA  &A
+.L       AIF   (&A GT 15).X
+R&A      EQU   &A
+&A       SETA  &A+1
+         AGO   .L
+.X       MEND
+         SPACE 5
+         MACRO
+&NAME    COPYRITE &TEXT
+         CNOP  0,8
+         LCLC  &S1,&S2,&S3
+&S1      SETC  'IHB&SYSNDX.A'
+&S2      SETC  'IHB&SYSNDX.B'
+&S3      SETC  'IHB&SYSNDX.C'
+&NAME    B     &S3-*(,15)
+         DC    AL1(&S2)
+&S1      DC    C&TEXT,C' -- &SYSDATE &SYSTIME'
+&S2      EQU   *-&S1
+&S3      STM   14,12,12(13)
+         MEND
+         SPACE 5
+         MACRO
+&NAME    MAKETR &V
+         LCLA  &A,&B
+         LCLC  &N,&T
+         AIF   ('&NAME' EQ '').USENDX
+&N       SETC  '&NAME'
+         AGO   .GEN
+.USENDX  ANOP
+&N       SETC  'IHB&SYSNDX'
+.GEN     ANOP
+&N       DC    0XL256'0',256C'.'
+         ORG   &N+C' '
+         DC    AL1(*-&N)
+         ORG   &N+C''''
+         DC    AL1(*-&N)
+         ORG   &N+C'&&'
+         DC    AL1(*-&N)
+         ORG   &N+C','
+         DC    AL1(*-&N)
+&B       SETA  K'&V
+.BUILD   AIF   (&A GE &B).ORG
+&A       SETA  &A+1
+&T       SETC  '&V'(&A,1)
+         ORG   &N+C'&T'
+         DC    AL1(*-&N)
+         AGO   .BUILD
+.ORG     ANOP
+         ORG   ,
+         MEND
+         EJECT
+IDUMP    CSECT
+         PUSH  PRINT
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA
+         IEZDEB ,
+TIOT     DSECT
+         IEFTIOT1 ,
+         IKJTCB ,
+         CVT   DSECT=YES
+         IEFZB4D0 ,
+         IEFZB4D2 ,
+         IEFUCBOB ,
+         IHAPDS ,
+         ORG   PDS2USRD
+SPFVER   DS    AL1               1 VERSION
+SPFMOD   DS    AL1               2 LEVEL
+SPFRSV1  DS    AL2               4 UNKNOWN (BUT NOT 0!)
+SPFCREAT DS    AL4               8 CREATION DATE (0YYYDDDF)
+SPFMODD  DS    AL4              12 LAST MOD DATE (0YYYDDDF)
+SPFMODT  DS    2AL1             14 LAST MOD TIME (HH:MM)
+SPFSIZE  DS    AL2              16 RECORDS IN MEMBER
+SPFINIT  DS    AL2              18 RECORDS IN MEMBER WHEN CREATED
+SPFMODR  DS    AL2              20 MODIFIED RECORDS IN MEMBER
+SPFUSER  DS    CL8              28 USERID
+SPFRSV2  DS    CL2              30 UNKNOWN (BUT NORMALLY BLANK?)
+SPFLEN   EQU   *-PDS2USRD          BETTER BE 30 (X'1E')
+SPFLENT  EQU   SPFLEN/2            BETTER BE 15 (X'0F')
+         IHADVCT ,
+         IKJCPPL ,
+         IKJPPL ,
+SIZEPPL  EQU   *-PPL
+         IKJIOPL ,
+SIZEIOPL EQU   *-IOPL
+         SETR
+         EJECT
+IDUMP    CSECT
+WORK     DSECT
+MYPPL    DS    XL(SIZEPPL),0D
+MYIOPL   DS    XL(SIZEIOPL),0D
+INDCBS   DCB   MACRF=E,DDNAME=FILLMEIN,EXLST=*-*,DCBE=*-*          V1L3
+INDCBL   EQU   *-INDCBS
+         ORG   INDCBS
+INDCB    DS    XL(INDCBL),0D
+OUTDCBS  DCB   MACRF=PM,DDNAME=FILLMEIN,DSORG=PS,EXLST=*-*
+OUTDCBL  EQU   *-OUTDCBS
+         ORG   OUTDCBS
+OUTDCB   DS    XL(OUTDCBL),0D
+INDCBES  DCBE  BLOCKTOKENSIZE=LARGE                                V1L3
+INDCBE   EQU   INDCBES,*-INDCBES                                   V1L3
+OPENPRMS OPEN  (*-*,INPUT),MF=L
+OPENPRML EQU   *-OPENPRMS
+         ORG   OPENPRMS
+OPENPARM DS    XL(OPENPRML),0D
+         IKJEFFDF DFDSECT=NO,DFDSEC2=YES
+WORK     DSECT
+         DS    0D
+         IKJEFFMT MTDSECT=NO
+         DS    0D
+IOB      DS    0XL40
+IOBFLAGS DS    0AL4,AL1(X'42',0,0,0)
+IOBECBPT DS    A(ECB)
+IOBCSW   DS    XL8
+IOBSTART DS    A(CCWS)
+IOBDCBPT DS    A
+         DS    2A
+IOBSEEK  DS    XL8
+CCWS     CCW   X'1A',HOMEADDR,X'40'+X'20',L'HOMEADDR  READ HOME ADDRESS
+         CCW   X'16',TRKBUF,X'40'+X'20',256           READ RECORD 0
+         CCW   X'5E',TRKBUF+256,X'20',X'FFFF'       READ MULTIPLE C-K-D
+IMEMBER  DS    CL8
+ECB      DS    A                   EVENT CONTROL BLOCK
+SAVERC   DS    A                   DYNALLOC RETURN CODE
+PDLPTR   DS    A                   ADDRESS OF PDL
+FF02ADDR DS    A                   ADDRESS OF IKJEFF02
+XLIST    DS    A                   FIRST EXTENT ENTRY
+EXLIST   DS    A                   DCB EXIT LIST
+SORTPARM CALL  ,(XLIST,EXNEXT-EXTENT,EXCOMP),MF=L
+DDNAMES  DS    0CL8
+INDDN    DS    CL8
+OUTDDN   DS    CL8
+DDNAMEL  EQU   L'INDDN
+DDNAMEN  EQU   (*-DDNAMES)/DDNAMEL
+BLDLWRK  DS    0A,XL(PDS2USRD-PDS2+62)
+BLDLWRKL EQU   *-BLDLWRK
+         ORG   BLDLWRK
+BLDLWORK DS    XL(BLDLWRKL)
+OUTLINE  DS    2AL2,CL80
+         ORG   OUTLINE+4
+OUTOFFH  DS    CL4
+OUTOFFD  DS    CL6,CL2
+OUTHEX0  DS    CL2
+OUTHEX1  DS    CL2
+OUTHEX2  DS    CL2
+OUTHEX3  DS    CL2,C
+OUTHEX4  DS    CL2
+OUTHEX5  DS    CL2
+OUTHEX6  DS    CL2
+OUTHEX7  DS    CL2,CL2
+OUTHEX8  DS    CL2
+OUTHEX9  DS    CL2
+OUTHEXA  DS    CL2
+OUTHEXB  DS    CL2,C
+OUTHEXC  DS    CL2
+OUTHEXD  DS    CL2
+OUTHEXE  DS    CL2
+OUTHEXF  DS    CL2,CL2
+OUTLEFTS DS    C'*'
+OUTCHAR  DS   0CL16
+OUTBYTE0 DS    C
+OUTBYTE1 DS    C
+OUTBYTE2 DS    C
+OUTBYTE3 DS    C
+OUTBYTE4 DS    C
+OUTBYTE5 DS    C
+OUTBYTE6 DS    C
+OUTBYTE7 DS    C
+OUTBYTE8 DS    C
+OUTBYTE9 DS    C
+OUTBYTEA DS    C
+OUTBYTEB DS    C
+OUTBYTEC DS    C
+OUTBYTED DS    C
+OUTBYTEE DS    C
+OUTBYTEF DS    C
+OUTRITS  DS    C'*'
+OUTDUMPL EQU   *-OUTLINE           BETTER BE LESS THAN X'54'
+         ORG   OUTLINE+4
+         DS    C'     **** TRACK '
+OUTTRKH  DS    CL6' '                                              V1L3
+OUTTRKD  DS    CL8' ',C'     HOME ADDRESS '                        V1L3
+OUTTRKHA DS    CL10' ',C' ****'
+OUTTRKL  EQU   *-OUTLINE
+         ORG   OUTLINE+4
+         DS    C'  ** COUNT '
+OUTCNT   DS    C'CCCCHHHHRRKKLLLL',C'   TTR '
+OUTTTR   DS    C'TTTTTTRR',C' **'                                  V1L3
+OUTCNTL  EQU   *-OUTLINE
+         ORG   ,
+SWITCH   DS    AL1(0)              SWITCHES --
+VTOC     EQU   X'80'                 INPUT DATA SET DEFINED AS VTOC
+EXTEND   EQU   X'40'                 EXTEND OPTION SPECIFIED
+FMTHA    EQU   X'20'                 FORMAT HOME ADDRESS
+FMTR0    EQU   X'10'                 FORMAT R0
+COMBKEY  EQU   X'08'                 COMBINE KEY AND DATA AREAS
+HOMEADDR DS    XL5
+OS       DS    9D'0'               SAVE AREAS FOR OPEN EXIT
+S        DS    (5*9)D'0'           DEFINE 5 SAVE AREAS
+AWORK    DS    XL256               ALLOCATION WORK AREA
+         IEFJFCBN ,
+JFCBL    EQU   *-INFMJFCB
+         ORG   INFMJFCB
+JFCB     DS    XL(JFCBL),0D
+LOWTT    DS    XL3,X               STARTING RELATIVE TRACK         V1L3
+HIGHTT   DS    XL3,X               ENDING RELATIVE TRACK           V1L3
+LOWTTT   DS    XL3,X               STARTING "TRUE" TRACK           V1L3
+HIGHTTT  DS    XL3,X               ENDING "TRUE" TRACK             V1L3
+         ORG   WORK+(X'1000'-256-8)
+         ORG   ,
+TRKBUF   DS   0X
+         ORG   TRKBUF+(64*1024)+256
+         DS    XL8
+WORKL    EQU   *-WORK
+         SPACE 5
+EXTENT   DSECT                     EXTENT
+EXNEXT   DS    A                   NEXT EXTENT ENTRY
+EXSTART  DS    A                   TT OF START OF EXTENT           V1L3
+EXLEN    DS    0A                  NUMBER OF TRACKS IN EXTENT      V1L3
+EXSIZE   DS    A                   NUMBER OF TRACKS IN EXTENT      V1L3
+         DS    0D'0'
+EXTENTL  EQU   *-EXTENT
+         POP   PRINT
+         EJECT
+IDUMP    CSECT
+         SPACE 1
+         USING (*,MASTDCBS-1),R12  DEFINE LOCAL ADDRESSABILITY     V1L3
+         USING WORK,R11            DEFINE WORK AREA ADDRESSABILITY
+         USING CPPL,R10            DEFINE CPPL ADDRESSABILITY
+         USING PPL,MYPPL           DEFINE PPL ADDRESSABILITY
+         USING IOPL,MYIOPL         DEFINE IOPL ADDRESSABILITY
+IN       USING IHADCB,INDCB        DEFINE INPUT DCB ADDRESSABILITY
+OUT      USING IHADCB,OUTDCB       DEFINE OUTPUT DCB ADDRESSABILITY
+         SPACE 1
+         COPYRITE 'IDUMP V1L3'     SAVE CALLER'S REGISTERS         V1L3
+         LR    R12,R15             COPY EP ADDRESS TO R12
+         SPACE 1
+         LR    R10,R1              COPY CPPL ADDRESS TO R10
+         L     R5,=A(WORKL)        LOAD LENGTH OF THE WORK AREA
+         GETMAIN R,                ALLOCATE STORAGE FOR THE            ?
+               LV=(R5)              WORK AREA
+         LR    R4,R1               COPY WORK AREA ADDRESS TO R4
+         LR    R11,R1              COPY WORK AREA ADDRESS TO R11
+         SR    R15,R15             SET R15 = 0
+         MVCL  R4,R14              CLEAR THE WORK AREA
+         LA    R15,S               LOAD ADDRESS OF THE SAVE AREA
+         ST    R15,8(,R13)         ADD SAVE AREA TO THE
+         ST    R13,4(,R15)          CALLER'S SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         L     R1,=A(MASTDCBS)     LOAD ADDR OF THE MASTER DCBS
+         USING MASTDCBS,R1         ESTABLISH ADDRESSABILITY
+         MVC   INDCB,INDCBM        COPY MASTER INPUT DCB TO WORK AREA
+         MVC   INDCBE,INDCBEM      COPY MASTER DCBE TO WORK AREA   V1L3
+         LA    R0,INDCBE           LOAD ADDR OF DCBE               V1L3
+         ST    R0,IN.DCBDCBE       STORE ITS ADDRESS IN THE DCB    V1L3
+         MVC   OUTDCB,OUTDCBM      COPY MASTER OUTPUT DCB TO WORK AREA
+         DROP  R1                  KILL MASTER DCB ADDRESSABILITY
+         ST    R10,DFCPPLP         SAVE CPPL ADDRESS IN THE DAIRFAIL   ?
+                                    PARAMETER LIST
+         ST    R10,MTCPPLP         SAVE CPPL ADDRESS IN THE IKJEFF02   ?
+                                    PARAMETER LIST
+         L     R0,CPPLCBUF         LOAD ADDRESS OF THE COMMAND BUFFER
+         ST    R0,PPLCBUF          STORE COMMAND BUFFER ADDRESS
+         L     R0,CPPLUPT          LOAD ADDRESS OF THE UPT
+         ST    R0,IOPLUPT          SAVE IN THE IOPL
+         ST    R0,PPLUPT           SAVE IN THE PPL
+         L     R0,CPPLECT          LOAD ADDRESS OF THE ECT
+         ST    R0,IOPLECT          SAVE IN THE IOPL
+         ST    R0,PPLECT           SAVE IN THE PPL
+         LA    R0,ECB              LOAD ADDRESS OF THE ECB
+         ST    R0,PPLECB           SAVE IN THE PPL
+         ST    R0,IOPLECB          SAVE IN THE IOPL
+         ST    R0,MTECBP           SAVE FOR IKJEFF02
+         L     R0,=A(IDPCL)        LOAD ADDR OF THE PCL
+         ST    R0,PPLPCL           SAVE IN THE PPL
+         LA    R0,PDLPTR           LOAD ADDR OF PDL POINTER
+         ST    R0,PPLANS           SAVE IN THE PPL
+         ST    R11,PPLUWA          SAVE WORK AREA ADDRESS IN THE PPL
+         LA    R0,MTCSECTP         LOAD ADDR OF THE IKJEFF02 DATA AREA
+         ST    R0,MTPLPTR          SAVE FOR IKJEFF02
+         MVI   MTSW1,MTPUTLSW      SET MTSW1 FOR IKJEFF02
+         L     R0,=A(IDUMPMSG)     LOAD ADDRESS OF MESSAGE SKELETONS
+         ST    R0,MTCSECTP         SAVE FOR IKJEFF02
+         LA    R0,=AL1(0,DFSVC99)  LOAD DAIRFAIL ENTRY CODE
+         ST    R0,DFIDP            SAVE FOR DAIRFAIL
+         LA    R0,SAVERC           LOAD ADDR OF DYNALLOC RC SAVE AREA
+         ST    R0,DFRCP            SAVE ADDR FOR DAIRFAIL
+         LOAD  EPLOC=IKJEFF02      LOAD IKJEFF02
+         ST    R0,FF02ADDR         SAVE ITS ADDRESS
+         LA    R0,FF02ADDR         LOAD ADDR OF IKJEFF02 POINTER
+         ST    R0,DFJEFF02         SAVE FOR DAIRFAIL
+         LINK  SF=(E,CALLPARS),    CALL THE IKJPARS                    ?
+               MF=(E,MYPPL)         SERVICE ROUTINE
+         LTR   R15,R15             TEST RC FROM IKJPARS
+         BNZ   QUIT                BR IF RC ¬= 0
+         SPACE 1
+         DROP  R10                 KILL CPPL ADDRESSABILITY
+         EJECT
+         USING IDPDL,R10           ESTABLISH PDL ADDRESSABILITY
+* ALLOCATE THE INPUT DATA SET
+         SPACE 1
+         L     R10,PDLPTR          LOAD ADDR OF THE PDL
+         L     R15,=A(ALLOCIN)     LOAD ADDR OF ALLOCIN
+         CALL  (15)                ALLOCATE THE INPUT DATA SET
+         LTR   R15,R15             TEST RC FROM ALLOCIN
+         BNZ   QUIT                QUIT IF ERROR
+         LH    R15,IDHA            LOAD VALUE FOR HA KEYWORD
+         SLL   R15,1               MULTIPLY KEYWORD VALUE BY 2
+         LA    R15,HAVAL(R15)      LOAD ADDR OF MASKS
+         NC    SWITCH,0(R15)       TURN OFF FLAGS
+         OC    SWITCH,1(R15)       ADD FLAGS
+         LH    R15,IDR0            LOAD VALUE FOR R0 KEYWORD
+         SLL   R15,1               MULTIPLY KEYWORD VALUE BY 2
+         LA    R15,R0VAL(R15)      LOAD ADDR OF MASKS
+         NC    SWITCH,0(R15)       TURN OFF FLAGS
+         OC    SWITCH,1(R15)       ADD FLAGS
+         LH    R15,IDKEY           LOAD VALUE FOR R0 KEYWORD
+         SLL   R15,1               MULTIPLY KEYWORD VALUE BY 2
+         LA    R15,COMBVAL(R15)    LOAD ADDR OF MASKS
+         NC    SWITCH,0(R15)       TURN OFF FLAGS
+         OC    SWITCH,1(R15)       ADD FLAGS
+         EJECT
+* ANALYZE THE EXTENT DATA
+         SPACE 1
+EX0100   TM    IDTT+6,X'80'        TEST IF TT ENTRIES
+         BZ    EX0600              BR IF NOT
+         LA    R9,IDTT             LOAD ADDR OF THE FIRST TT ENTRY
+EX0200   MVC   AWORK+16(6),=8C'0'  CLEAR 4 BYTES                   V1L3
+         L     R0,0(,R9)           LOAD ADDR OF EXTENT TEXT
+         LH    R1,4(,R9)           LOAD LENGTH OF EXTENT TEXT
+         LA    R14,AWORK+16+6      LOAD END OF WORK AREA           V1L3
+         SR    R14,R1              COMPUTE START OF TEXT
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY TT
+         TR    AWORK+16(6),HEXCNVT      STEP 1                     V1L3
+         PACK  LOWTT(4),AWORK+16(7)     STEP 2                     V1L3
+         MVC   HIGHTT,LOWTT        COPY FIRST TT TO SECOND TT      V1L3
+         TM    8+6(R9),X'80'       TEST IF SECOND TEXT IS PRESENT
+         BZ    EX0300              BR IF SO
+         MVC   AWORK+16(6),=8C'0'  CLEAR 4 BYTES                   V1L3
+         L     R0,8+0(,R9)         LOAD ADDR OF END OF EXTENT TEXT
+         LH    R1,8+4(,R9)         LOAD LENGTH OF END OF EXTENT TEXT
+         LA    R14,AWORK+16+6      LOAD END OF WORK AREA           V1L3
+         SR    R14,R1              COMPUTE START OF TEXT
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY TT
+         TR    AWORK+16(6),HEXCNVT      STEP 1                     V1L3
+         PACK  HIGHTT(4),AWORK+16(7)    STEP 2                     V1L3
+EX0300   SR    R0,R0               SET REG 0 = 0                   V1L3
+         ICM   R0,B'0111',LOWTT    LOAD THE LOW TT                 V1L3
+         BAL   R14,VALTT           VERIFY IT'S OK
+         B     EX0500              BR IF NOT
+         ICM   R0,B'0111',HIGHTT   LOAD THE HIGH TT                V1L3
+         BAL   R14,VALTT           VERIFY IT'S OK
+         B     EX0500              BR IF NOT
+         SR    R1,R1               SET REG 1 = 0                   V1L3
+         ICM   R1,B'0111',HIGHTT   LOAD END OF EXTENT              V1L3
+         ICM   R0,B'0111',LOWTT    LOAD START OF EXTENT            V1L3
+         SR    R1,R0               COMPUTE LENGTH OF EXTENT        V1L3
+         BNM   EX0400              BR IF EXTENT OK
+         SR    R1,R1               SET EXTENT LENGTH = 0
+EX0400   LA    R1,1(,R1)           ADD 1 TO EXTENT LENGTH
+         STCM  R1,B'0111',HIGHTT   STORE EXTENT LENGTH IN WORK AREA 1L3
+         LA    R0,EXTENTL          LOAD LENGTH OF AN EXTENT ENTRY
+         GETMAIN R,                ALLOCATE STORAGE FOR AN             ?
+               LV=(0)               EXTENT ENTRY
+         XC    0(EXTENTL,R1),0(R1) CLEAR THE ENTRY                 V1L3
+         MVC   EXNEXT-EXTENT(,R1),XLIST ADD EXTENT ENTRY
+         ST    R1,XLIST                  TO EXTENT LIST
+         MVC   EXSTART-EXTENT+1(3,R1),LOWTT                        V1L3
+         MVC   EXLEN-EXTENT+1(3,R1),HIGHTT                         V1L3
+EX0500   L     R9,16(,R9)          LOAD ADDR OF THE NEXT ELEMENT
+         N     R9,=A(X'FFFFFF')    TURN OFF THE HIGH ORDER BYTE
+         BNZ   EX0200              BR IF ANOTHER TT ENTRY EXISTS
+EX0600   TM    IDCCHH+6,X'80'      TEST IF CCHH ENTRIES
+         BZ    EX1400              BR IF NOT
+* NOW, TRANSLATE CCHH OPERANDS                                     V1L3
+         LA    R9,IDCCHH           LOAD ADDR OF THE FIRST TT ENTRY
+EX0700   MVC   AWORK+16(8),=8C'0'    CLEAR 8 BYTES
+         L     R0,0(,R9)           LOAD ADDR OF EXTENT TEXT
+         LH    R1,4(,R9)           LOAD LENGTH OF EXTENT TEXT
+         LA    R14,AWORK+16+8      LOAD END OF WORK AREA
+         SR    R14,R1              COMPUTE START OF TEXT
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY CCHH
+         TR    AWORK+16(8),HEXCNVT          STEP 1
+         PACK  AWORK+28(5),AWORK+16(9)      STEP 2
+         MVC   AWORK+32(4),AWORK+28 COPY FIRST CCHH TO SECOND CCHH
+         TM    8+6(R9),X'80'       TEST IF SECOND TEXT IS PRESENT
+         BZ    EX0800              BR IF SO
+         MVC   AWORK+16(8),=8C'0'    CLEAR 8 BYTES
+         L     R0,8+0(,R9)         LOAD ADDR OF END OF EXTENT TEXT
+         LH    R1,8+4(,R9)         LOAD LENGTH OF END OF EXTENT TEXT
+         LA    R14,AWORK+16+8      LOAD END OF WORK AREA
+         SR    R14,R1              COMPUTE START OF TEXT
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY TT
+         TR    AWORK+16(8),HEXCNVT          STEP 1
+         PACK  AWORK+32(5),AWORK+16(9)      STEP 2
+EX0800   XC    AWORK+16(8),AWORK+16         CLEAR MBBCCHHR
+         MVC   AWORK+16+3(4),AWORK+28       COPY CCHH TO MBBCCHHR
+         LA    R2,AWORK+16         LOAD ADDR OF MBBCCHHR
+         L     R1,IN.DCBDEBAD      LOAD ADDR OF THE DEB
+         L     R15,=A(CNVTCCHH)    LOAD ADDR OF CNVTCCHH
+         CALL  (15)                CONVERT CCHH TO TT
+         LTR   R15,R15             TEST RC
+         BNZ   EX1100              BR IF ERROR
+         STCM  R0,B'1111',AWORK+36    SAVE TT                      V1L3
+         XC    AWORK+16(8),AWORK+16         CLEAR MBBCCHHR
+         MVC   AWORK+16+3(4),AWORK+32       COPY CCHH TO MBBCCHHR
+         LA    R2,AWORK+16         LOAD ADDR OR MBBCCHHR
+         L     R1,IN.DCBDEBAD      LOAD ADDR OF THE DEB
+         L     R15,=A(CNVTCCHH)    LOAD ADDR OF CNVTCCHH
+         CALL  (15)                CONVERT CCHH TO TT
+         LTR   R15,R15             TEST RC
+         BNZ   EX1100              BR IF ERROR
+         STCM  R0,B'1111',AWORK+40    SAVE ENDING TT               V1L3
+EX0900   L     R1,AWORK+40         LOAD END OF EXTENT              V1L3
+         L     R0,AWORK+36         LOAD START OF EXTENT            V1L3
+         CR    R0,R1               COMPARE
+         BNH   EX1000              BR IF START <= END
+         XR    R0,R1               SWITCH
+         XR    R1,R0                 START AND
+         XR    R0,R1                   END
+EX1000   ST    R0,AWORK+36         SAVE START                      V1L3
+         SR    R1,R0               COMPUTE LENGTH                  V1L3
+         LA    R1,1(,R1)           ADD 1 TO EXTENT LENGTH
+         ST    R1,AWORK+40         STORE EXTENT LENGTH IN WORK AREA 1L3
+         LA    R0,EXTENTL          LOAD LENGTH OF AN EXTENT ENTRY
+         GETMAIN R,                ALLOCATE STORAGE FOR AN             ?
+               LV=(0)               EXTENT ENTRY
+         MVC   EXNEXT-EXTENT(,R1),XLIST ADD EXTENT ENTRY
+         ST    R1,XLIST                  TO EXTENT LIST
+         L     R0,AWORK+36         LOAD START OF EXTENT            V1L3
+         L     R15,AWORK+40        LOAD LENGTH OF EXTENT           V1L3
+         ST    R0,EXSTART-EXTENT(,R1)  STORE IN EXTENT ENTRY       V1L3
+         ST    R15,EXLEN-EXTENT(,R1)  STORE IN EXTENT ENTRY        V1L3
+         B     EX1300
+EX1100   LA    R14,OUTLINE+4       LOAD ADDR
+         L     R0,0(,R9)           LOAD START OF FIRST CCHH
+         LH    R1,4(,R9)           LOAD LENGTH
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY
+         TM    8+6(R9),X'80'       TEST IF SECOND ARG PRESENT
+         BZ    EX1200              BR IF NOT
+         MVI   0(R14),C':'         INSERT COLON
+         LA    R14,1(,R14)         BUMP POINTER
+         L     R0,8+0(,R9)         LOAD START OF SECOND CCHH
+         LH    R1,8+4(,R9)         LOAD LENGTH
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY
+EX1200   LA    R15,OUTLINE+4       LOAD START OF TEXT
+         SR    R14,R15             COMPUTE LENGTH
+         ST    R15,MTINSRTS+4      STORE START OF TEXT
+         STC   R14,MTINSRTS+4      SAVE LENGTH OF TEXT
+         LA    R0,=CL14'CCHH'      LOAD ADDR OF DESCRIPTOR
+         O     R0,=AL1(14,0,0,0)   ADD LENGTH
+         STCM  R0,B'1111',MTINSRTS STORE
+         L     R0,=C'MS07'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE ERROR MESSAGE
+EX1300   L     R9,16(,R9)          LOAD ADDR OF THE NEXT ELEMENT
+         N     R9,=A(X'FFFFFF')    TURN OFF THE HIGH ORDER BYTE
+         BNZ   EX0700              BR IF ANOTHER TT ENTRY EXISTS
+EX1400   DC    0H'0'                                               V1L3
+         AGO   .DELTRUE                                            V1L3
+* CHECK TRUE TT
+EX1400   TM    IDTRUETT+6,X'80'    TEST IF TRUETT SPECIFIED
+         BZ    EX2200              BR IF NOT
+         LA    R9,IDTRUETT         LOAD ADDR OF THE 1ST TRUETT ENTRY
+EX1500   MVC   AWORK+16(6),=8C'0'  CLEAR 6 BYTES
+         L     R0,0(,R9)           LOAD ADDR OF EXTENT TEXT
+         LH    R1,4(,R9)           LOAD LENGTH OF EXTENT TEXT
+         LA    R14,AWORK+16+6      LOAD END OF WORK AREA
+         SR    R14,R1              COMPUTE START OF TEXT
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY TT
+         TR    AWORK+16(6),HEXCNVT       STEP 1
+         PACK  AWORK+22(4),AWORK+16(7)   STEP 2
+         MVC   AWORK+26(3),AWORK+22  COPY FIRST TT TO SECOND TT
+         TM    8+6(R9),X'80'       TEST IF SECOND TEXT IS PRESENT
+         BZ    EX1600              BR IF SO
+         MVC   AWORK+16(6),=8C'0'  CLEAR 6 BYTES
+         L     R0,8+0(,R9)         LOAD ADDR OF END OF EXTENT TEXT
+         LH    R1,8+4(,R9)         LOAD LENGTH OF END OF EXTENT TEXT
+         LA    R14,AWORK+16+6      LOAD END OF WORK AREA
+         SR    R14,R1              COMPUTE START OF TEXT
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY TT
+         TR    AWORK+16(6),HEXCNVT       STEP 1
+         PACK  AWORK+26(4),AWORK+16(7)   STEP 2
+EX1600   L     R1,IN.DCBDEBAD      LOAD ADDR OF THE DEB
+         SR    R2,R2               SET R2 = 0
+         ICM   R2,B'0111',AWORK+22 LOAD THE LOW TT VALUE
+         BAL   R14,CNVTTTT         CONVERT TRUE TT TO RELATIVE TT
+         LTR   R15,R15             TEST RC
+         BNZ   EX1900              BR IF OK
+         STCM  R0,B'1100',AWORK+22 SAVE LOW RELATIVE TT
+         L     R1,IN.DCBDEBAD      LOAD ADDR OF THE DEB
+         SR    R2,R2               SET R2 = 0
+         ICM   R2,B'0111',AWORK+26 LOAD SECOND TRUE TT
+         BAL   R14,CNVTTTT         CONVERT TRUE TT TO RELATIVE TT
+         LTR   R15,R15             TEST RC
+         BNZ   EX1900              BR IF OK
+         STCM  R0,B'1100',AWORK+26 SAVE HIGH RELATIVE TT
+         LH    R1,AWORK+26         LOAD END OF ENTENT
+         SH    R1,AWORK+22         SUBTRACT START OF EXTENT
+         BNM   EX1700              BR IF EXTENT OK
+         SR    R1,R1               SET EXTENT LENGTH = 0
+         STCM  R1,B'0011',AWORK+26 STORE LENGTH
+         B     EX1800              CONTINUE
+EX1700   LA    R1,1(,R1)           ADD 1 TO CALCULATED LENGTH
+         STCM  R1,B'0011',AWORK+26 SAVE LENGTH
+EX1800   LA    R0,EXTENTL          LOAD LENGTH OF AN EXTENT ENTRY
+         GETMAIN R,                ALLOCATE STORAGE FOR AN             ?
+               LV=(0)               EXTENT ENTRY
+         MVC   EXNEXT-EXTENT(,R1),XLIST ADD EXTENT ENTRY
+         ST    R1,XLIST                  TO EXTENT LIST
+         LH    R0,AWORK+22         LOAD START OF EXTENT
+         LH    R15,AWORK+26        LOAD LENGTH OF EXTENT
+         STH   R0,EXSTART-EXTENT(,R1)  STORE IN EXTENT ENTRY
+         STH   R15,EXLEN-EXTENT(,R1)  STORE IN EXTENT ENTRY
+         B     EX2100              AND CONTINUE
+EX1900   LA    R14,OUTLINE+4       LOAD ADDR
+         L     R0,0(,R9)           LOAD START OF FIRST CCHH
+         LH    R1,4(,R9)           LOAD LENGTH
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY
+         TM    8+6(R9),X'80'       TEST IF SECOND ARG PRESENT
+         BZ    EX2000              BR IF NOT
+         MVI   0(R14),C':'         INSERT COLON
+         LA    R14,1(,R14)         BUMP POINTER
+         L     R0,8+0(,R9)         LOAD START OF SECOND CCHH
+         LH    R1,8+4(,R9)         LOAD LENGTH
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY
+EX2000   LA    R15,OUTLINE+4       LOAD START OF TEXT
+         SR    R14,R15             COMPUTE LENGTH
+         ST    R15,MTINSRTS+4      STORE START OF TEXT
+         STC   R14,MTINSRTS+4      SAVE LENGTH OF TEXT
+         LA    R0,=CL14'TRUE TRACK'  LOAD ADDR OF DESCRIPTOR
+         O     R0,=AL1(14,0,0,0)   ADD LENGTH
+         STCM  R0,B'1111',MTINSRTS STORE
+         L     R0,=C'MS07'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE ERROR MESSAGE
+EX2100   L     R9,16(,R9)          LOAD ADDR OF THE NEXT ELEMENT
+         N     R9,=A(X'FFFFFF')    TURN OFF THE HIGH ORDER BYTE
+         BNZ   EX1500              BR IF ANOTHER TT ENTRY EXISTS
+.DELTRUE ANOP                                                      V1L3
+* SORT EXTENT LIST
+EX2200   OC    XLIST,XLIST         TEST IF EXTENT LIST BUILT
+         BZ    EX2900              EXIT IF NO EXTENTS
+         L     R15,=V(QSORTL)      LOAD ADDR OF QSORTL
+         L     R2,=A(EXCOMP)       LOAD ADDR OF EXCOMP
+         CALL  (15),                        SORT EXTENT LIST           ?
+               (XLIST,EXOFF,(R2)),                                     ?
+               MF=(E,SORTPARM)
+CURRENT  USING EXTENT,R2
+NEXT     USING EXTENT,R3
+EX2300   LA    R2,XLIST-(EXNEXT-EXTENT)   LOAD DUMMY EXTENT ENTRY
+EX2400   L     R2,CURRENT.EXNEXT   LOAD ADDR OF NEXT EXTENT ENTRY
+         LTR   R2,R2               TEST IF END
+         BZ    EX3300              BR IF SO
+EX2500   L     R3,CURRENT.EXNEXT   LOAD ADDR OF THE NEXT ENTRY
+         LTR   R3,R3               TEST IF END
+         BZ    EX3300              BR IF SO
+         L     R15,CURRENT.EXSTART LOAD START OF EXTENT            V1L3
+         A     R15,CURRENT.EXLEN   COMPUTE END OF EXTENT           V1L3
+         C     R15,NEXT.EXSTART    COMPARE W/START OF NEXT EXTENT  V1L3
+         BNH   EX2800              BR IF OK
+* EXTENT ENTRY IN R2 OVERLAPS EXTENT ENTRY IN R3
+* DETERMINE EXTENT OF OVERLAP
+         L     R0,NEXT.EXSTART     LOAD START OF NEXT EXTENT       V1L3
+         A     R0,NEXT.EXLEN       COMPUTE END OF NEXT EXTENT      V1L3
+         CR    R15,R0              COMPARE END OF CURRENT EXTENT WITH  ?
+                                    END OF NEXT EXTENT
+         BNL   EX2700              BR IF COMPLETE OVERLAP
+* PARTIAL OVERLAP -- ADD R3 EXTENT TO R2 EXTENT
+         L     R15,CURRENT.EXSTART LOAD START OF CURRENT EXTENT    V1L3
+         SR    R0,R15              COMPUTE LENGTH OF UPDATED EXTENT
+         BP    EX2600              BR IF OK
+         DC    H'0'                ABEND IF NEGATIVE LENGTH
+EX2600   ST    R0,CURRENT.EXLEN    STORE NEW EXTENT LENGTH IN CURRENT 3>
+                                    EXTENT                         V1L3
+EX2700   MVC   CURRENT.EXNEXT,NEXT.EXNEXT  REMOVE THE NEXT EXTENT FROM ?
+                                            THE EXTENT LIST
+         LA    R0,EXTENTL          LOAD LENGTH OF EXTENT
+         FREEMAIN R,               RELEASE STORAGE FOR THE R3          ?
+               LV=(0),              EXTENT                             ?
+               A=(R3)
+         B     EX2300              AND START OVER
+EX2800   LR    R2,R3
+         B     EX2500
+         DROP  CURRENT,NEXT        KILL ADDRESSABILITY
+         SPACE 1
+EX2900   TM    SWITCH,VTOC         TEST IF VTOC
+         BO    EX3100              BR IF SO
+         ICM   R0,B'0011',A1DSORG-A1PARM+AWORK  LOAD DSORG
+         N     R0,=AL1(0,0,DCBDSGPO,0)  TEST IF DSORG = PO
+         BZ    EX3100              BR IF NOT
+         TM    IMEMBER,255-C' '    TEST IF MEMBER NAME IN IMEMBER
+         BZ    EX3100              BR IF NOT
+         SPACE 1
+         L     R0,=AL2(1,PDS2USRD-PDS2+62)  LOAD COUNT AND LENGTH
+         STCM  R0,B'1111',BLDLWORK STORE IN WORK AREA
+         MVC   BLDLWORK+4(L'IMEMBER),IMEMBER COPY MEMBER NAME TO WORK  ?
+                                            AREA
+         BLDL  INDCB,BLDLWORK      TEST IF MEMBER IN DATA SET
+         LTR   R15,R15             TEST RC FROM BLDL
+         BNZ   EX3000              BR IF AN ERROR
+         LA    R0,EXTENTL          LOAD LENGTH OF AN EXTENT ENTRY
+         GETMAIN R,                ALLOCATE STORAGE FOR THE            ?
+               LV=(0)               EXTENT ENTRY
+         XC    0(EXTENTL,R1),0(R1) CLEAR THE EXTENT ENTRY
+         ST    R1,XLIST            SAVE EXTENT ENTRY ADDR IN XLIST
+         LA    R0,2                SET 2 TRACKS
+         ST    R0,EXLEN-EXTENT(,R1)  STORE AS LENGTH
+         MVC   (EXSTART-EXTENT)+2(2,R1),BLDLWORK+4+(PDS2TTRP-PDS2) V1L3>
+                                     COPY TT TO NEW EXTENT ELEMENT
+         B     EX3300              AND CONTINUE
+EX3000   MVI   IMEMBER,0           INDICATE NO MEMBER PROVIDED
+         SPACE 1
+* NO EXTENTS -- CREATE A SINGLE EXTENT ENTRY FOR THE ENTIRE DATA SET
+         SPACE 1
+EX3100   LA    R0,EXTENTL          LOAD LENGTH OF AN EXTENT ENTRY
+         GETMAIN R,                ALLOCATE STORAGE FOR THE            ?
+               LV=(0)               EXTENT ENTRY
+         XC    0(EXTENTL,R1),0(R1) CLEAR THE EXTENT ENTRY
+         ST    R1,XLIST            SAVE EXTENT ENTRY ADDR IN XLIST
+         L     R15,IN.DCBDEBAD     LOAD ADDR OF THE DEB
+         N     R15,=A(X'FFFFFF')   TURN OFF THE HIGH ORDER BYTE
+         SR    R0,R0               SET R0 = 0
+         IC    R0,DEBNMEXT-DEBBASIC(,R15)  LOAD NUMBER OF EXTENTS IN   ?
+                                            THE DEB EXTENT LIST
+         LA    R15,DEBBASND-DEBBASIC(,R15)  COMPUTE START OF THE DEB   ?
+                                             EXTENT LIST
+         SR    R14,R14             SET NUMBER OF TRACKS = 0
+         SR    R2,R2               SET REG 2 = 0                   V1L3
+EX3200   ICM   R2,B'0011',DEBNMTRK-DEBDASD(R15)  LOAD LOW PART OF  V1L3>
+                                                  TRACKS IN EXTENT V1L3
+         ICM   R2,B'0100',DEBNMTRKHI-DEBDASD(R15)  LOAD HIGH PART OF L3>
+                                                  TRACKS IN EXTENT V1L3
+         AR    R14,R2              ADD TRACKS IN EXTENT TO         V1L3>
+                                    TOTAL TRACKS                   V1L3
+         LA    R15,DEBDASDE-DEBDASD(,R15)  COMPUTE ADDR OF THE NEXT    ?
+                                            DEB EXTENT ENTRY
+         BCT   R0,EX3200           CONTINUE GETTING DATA SET SIZE
+         ST    R14,EXLEN-EXTENT(,R1)  STORE DATA SET SIZE IN EXTENT    ?
+                                       ENTRY
+EX3300   DC    0H'0'
+         EJECT
+* ALLOCATE THE OUTPUT DATA SET
+         SPACE 1
+         CNOP  0,8
+ID0100   L     R1,=A(A1PARM)       LOAD ADDR OF THE ALLOCATION PARMS
+         MVC   AWORK(A1PARML),0(R1)  COPY ALLOCATION PARMS TO WORK AREA
+         LA    R14,A1DSN-A1PARM+AWORK  LOAD ADDR OF DSN
+         LA    R15,L'A1DSN         LOAD LENGTH OF DSN
+         L     R0,IDOUT            LOAD ADDRESS OF OUTPUT DSN
+         LH    R1,IDOUT+4          LOAD LENGTH OF OUTPUT DSN
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER TO LENGTH
+         MVCL  R14,R0              COPY DSN TO PARM LIST
+         OC    IDXTEND,IDXTEND     TEST IF EXTEND
+         BZ    ID0300              BR IF NOT
+         TM    IDOUT+8+6,X'80'     TEST IF MEMBER NAME PRESENT
+         BZ    ID0200              BR IF NOT
+         L     R0,=C'MS09'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE COMMENT
+         B     ID0300              AND CONTINUE
+ID0200   MVI   A1STATS-A1PARM+AWORK,DISPMOD  CHANGE DISPOSITION TO MOD
+         OI    SWITCH,EXTEND       INDICATE EXTEND SPECIFIED
+ID0300   TM    IDOUT+8+6,X'80'     TEST IF MEMBER NAME IS PRESENT
+         BZ    ID0400              BR IF NOT
+         LA    R0,DALMEMBR         LOAD KEY
+         STCM  R0,B'0011',A1MEMBER-A1PARM+AWORK-6  STORE KEY IN        ?
+                                                    TEXT UNIT
+         LA    R14,A1MEMBER-A1PARM+AWORK  LOAD ADDR OF MEMBER NAME
+         LA    R15,L'A1MEMBER      LOAD LENGTH OF MEMBER
+         L     R0,IDOUT+8          LOAD ADDRESS OF OUTPUT MEMBER
+         LH    R1,IDOUT+8+4        LOAD LENGTH OF OUTPUT MEMBER
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER TO LENGTH
+         MVCL  R14,R0              COPY MEMBER NAME TO PARM LIST
+ID0400   LA    R1,AWORK            LOAD ADDRESS OF AWORK
+         L     R15,=A(DYNRELOC)    LOAD ADDR OF DYNRELOC
+         CALL  (15)                RELOCATE THE ADDRESS CONSTANTS
+         DYNALLOC ,                ATTEMPT TO ALLOCATE THE DATA SET
+         LA    R1,A1DDN-A1PARM+AWORK  LOAD ADDR OF ALLOCATED DDNAME
+*        LA    R0,A1DSORG-A1PARM+AWORK  LOAD ADDR OF ALLOCATED DSORG P3
+         LA    R14,A1MEMBER-A1PARM+AWORK-6  LOAD ADDR OF MEMBER KEY
+         LTR   R0,R15              TEST RETURN CODE
+         BZ    ID0800              BR IF OK
+         L     R15,=A(X'1708')     SET R0 TO CATALOG ERROR RC
+         CLM   R15,B'0011',(S99ERROR-S99RB)+(A1RB-A1PARM)+AWORK  TEST  ?
+                                                     IF CATALOG PROBLEM
+         BE    ID0500              BR IF SO
+         L     R15,=A(ALLOCERR)    LOAD ADDR OF ERROR ROUTINE
+         CALL  (15)                GENERATE ALLOCATION ERROR MESSAGE
+         B     QUIT                AND EXIT WITH A TEAR IN OUR EYE
+ID0500   NI    SWITCH,255-EXTEND   RESET EXTEND OPTION
+         L     R1,=A(A2PARM)       LOAD ADDRSS OF PARM LIST TO         ?
+                                    ALLOCATE A NEW DATA SET
+         MVC   AWORK(A2PARML),0(R1)  COPY PARM LIST TO WORK AREA
+         LA    R14,A2DSN-A2PARM+AWORK  LOAD ADDR OF DSN
+         LA    R15,L'A2DSN         LOAD LENGTH OF DSN
+         L     R0,IDOUT            LOAD ADDRESS OF OUTPUT DSN
+         LH    R1,IDOUT+4          LOAD LENGTH OF OUTPUT DSN
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER TO LENGTH
+         MVCL  R14,R0              COPY DSN TO PARM LIST
+         TM    IDOUT+8+6,X'80'     TEST IF MEMBER NAME IS PRESENT
+         BZ    ID0600              BR IF NOT
+         LA    R0,DALMEMBR         LOAD KEY
+         STCM  R0,B'0011',A2MEMBER-A2PARM+AWORK-6  STORE KEY IN        ?
+                                                    TEXT UNIT
+         LA    R0,DALDIR           LOAD KEY
+         STCM  R0,B'0011',A2DIR-A2PARM+AWORK-6     STORE KEY IN        ?
+                                                    TEXT UNIT
+         LA    R14,A2MEMBER-A2PARM+AWORK  LOAD ADDR OF MEMBER NAME
+         LA    R15,L'A2MEMBER      LOAD LENGTH OF MEMBER
+         L     R0,IDOUT+8          LOAD ADDRESS OF OUTPUT MEMBER
+         LH    R1,IDOUT+8+4        LOAD LENGTH OF OUTPUT MEMBER
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER TO LENGTH
+         MVCL  R14,R0              COPY MEMBER NAME TO PARM LIST
+ID0600   LA    R1,AWORK            LOAD ADDRESS OF WORK AREA
+         L     R15,=A(DYNRELOC)    LOAD ADDR OF DYNRELOC
+         CALL  (15)                RELOCATE THE ADDRESS CONSTANTS
+         DYNALLOC ,                ATTEMPT TO ALLOCATE OUTPUT DATA SET
+*        LA    R14,A2MEMBER-A2PARM+AWORK-6  LOAD ADDR OF MEMBER KEY
+*        LA    R1,A2DDN-A2PARM+AWORK  LOAD ADDR OF ALLOCATED DDNAME
+*        SR    R0,R0               SET ADDR OF DSORG = 0
+         LTR   R0,R15              TEST RETURN CODE FROM DYNALLOC
+         BZ    ID0700              AND CONTINUE
+         L     R15,=A(ALLOCERR)    LOAD ADDR OF ALLOCATION ERROR PGM
+         CALL  (15)                ISSUE ALLOCATION FAILED MSG
+         B     QUIT                AND QUIT
+ID0700   MVC   OUTDDN,A2DDN-A2PARM+AWORK SAVE ALLOCATED DDNAME
+         MVC   OUT.DCBDDNAM,OUTDDN COPY DDNAME TO DCB
+         B     ID1100              BR IF OK
+ID0800   MVC   OUTDDN,0(R1)        SAVE DDNAME
+         MVC   OUT.DCBDDNAM,0(R1)  COPY DDNAME TO DCB
+         ICM   R1,B'0011',A1DSORG-A1PARM+AWORK  LOAD ALLOCATED DSORG P3
+         N     R1,=AL1(0,0,255,255)  ISOLATE DSORG BITS              P3
+         BNZ   ID0900              BR IF NOT
+         OC    0(2,R14),0(R14)     TEST IF MEMBER NAME ALLOCATED
+         BNZ   ID1000              BR IF SO
+         B     ID1100              BR IF NOT, DSORG = 0 IS OK
+*ID0900   N     R1,=AL1(0,0,255,255-DCBDSGU)  LEAVE TYPE BITS ON     P2
+ID0900   N     R1,=AL1(0,0,255-DCBDSGU,255)  LEAVE TYPE BITS ON      P2
+         L     R15,=AL1(0,0,DCBDSGPS,0)  LOAD TEST DSORG
+         OC    0(2,R14),0(R14)     TEST IF MEMBER NAME ALLOCATED
+         BZ    *+8                 BR IF NOT
+         L     R15,=AL1(0,0,DCBDSGPO,0)  LOAD TEST DSORG
+         CR    R15,R1              COMPARE TEST DSORG WITH ACTUAL
+         BE    ID1100              BR IF OK
+ID1000   L     R0,=C'MS03'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE MESSAGE
+         B     QUIT
+ID1100   DC    0H'0'
+ID1200   MVC   OPENPARM,OPENMAST   COPY MASTER OPEN PARMS TO OPENPARM
+         OPEN  (OUTDCB,OUTPUT),    ATTEMPT TO OPEN OUTPUT              ?
+               MF=(E,OPENPARM)      DATA SET
+         TM    OUT.DCBOFLGS,DCBOFOPN  TEST IF OUTPUT DATA SET IS OPEN
+         BO    ID1300              BR IF SO
+         L     R0,=C'MS04'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE MESSAGE
+         B     QUIT
+ID1300   TM    OUT.DCBRECFM,DCBRECCC  TEST CARRIAGE CONTROL SPECIFIED  ?
+                                       IN DCB
+         BNZ   ID1400              BR IF SO
+         IC    R0,OUT.DCBRECFM     LOAD OUTPUT RECORD FORMAT
+         N     R0,=A(DCBRECLA)     TURN OFF NON CRITICAL BITS
+         C     R0,=A(DCBRECV)      TEST IF RECFM = V
+         BE    ID1500              BR IF SO
+ID1400   L     R0,=C'MS05'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE MESSAGE
+         B     QUIT
+ID1500   LA    R0,84               LOAD MINIMUM LRECL WE REQUIRE
+         CH    R0,OUT.DCBLRECL     COMAPRE MINIMUM W/ ACTUAL
+         BNH   ID1600              BR IF LRECL IS OK
+         L     R0,=C'MS06'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE MESSAGE
+         B     QUIT
+         CNOP  0,8
+ID1600   DC    0H'0'
+         EJECT
+* GENERATE THE FRONT MATTER
+         SPACE 1
+         TM    SWITCH,EXTEND       TEST IF EXTEND
+         BZ    XOPT0200            BR IF NOT
+         LA    R2,3                SET R3 = 3
+XOPT0100 BAL   R14,WRITEBL         WRITE A BLANK LINE
+         BCT   R2,XOPT0100         DO IT 3 TIMES
+* INSERT THE DATA SET NAME BEING DUMPED CENTERED, FOLLOWED BY A BLANK
+* LINE
+XOPT0200 MVI   OUTLINE+4,C'*'      ADD * CHARACTERS TO THE OUTPUT LINE
+         MVC   OUTLINE+5(79),OUTLINE+4  INSERT *S INTO OUTPUT
+         LH    R1,IDDSN+4          LOAD LENGTH OF THE DATA SET NAME
+         LA    R15,2(,R1)          ADD 2
+         LA    R14,80              SET R14 = LENGTH OF THE LINE
+         SR    R14,R15             COMPUTE TOTAL WHITE SPACE
+         SRL   R14,1               DIVIDE WHITE SPACE BY 2
+         LA    R14,OUTLINE+4(R14)  SET START OF THE DATA SET NAME
+         MVI   0(R14),C' '         ADD A BLANK
+         LA    R14,1(,R14)         BUMP OUTPUT
+         LR    R15,R1              COPY LENGTH TO R15
+         L     R0,IDDSN            LOAD ADDRESS OF THE DATA SET NAME
+         MVCL  R14,R0              COPY DATA SET NAME
+         MVI   0(R14),C' '         ADD A BLANK
+         LA    R0,84               SET RECORD LENGTH
+         STH   R0,OUTLINE          STORE RECORD LENGTH IN THE RDW
+         PUT   OUTDCB,OUTLINE      WRITE THE RECORD
+         BAL   R14,WRITEBL         WRITE A BLANK LINE
+*                              ----+--
+         MVC   OUTLINE+4(7),=C'RUN AT '
+         LA    R1,OUTLINE+4+7      LOAD START OF CNVTDATE OUTPUT AREA
+         L     R15,=A(CNVTDATE)    LOAD ADDR OF CNVTDATE
+         CALL  (15)                INSERT DATE AND TIME INTO MESSAGE
+         LA    R0,4+7+CDOUTL       LOAD LENGTH
+         STH   R0,OUTLINE          STORE IN OUTLINE
+         PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         L     R3,IN.DCBDEBAD      LOAD ADDRESS OF THE DEB
+         N     R3,=A(X'FFFFFF')    TURN OFF ANY HIGH ORDER BITS
+         SR    R4,R4               SET R4 = 0
+         ICM   R4,B'0001',DEBNMEXT-DEBBASIC(R3)  LOAD NMBR OF EXTENTS
+         BZ    XT0200              BR IF NONE
+         BAL   R14,WRITEBL         WRITE A BLANK LINE
+         SPACE 1
+* GENERATE AN EXTENT MAP, USING EXTENT INFORMATION IN THE DEB
+         SPACE 1
+         L     R0,=A(HDR1)         LOAD ADDRESS OF THE EXTENT HEADER
+         PUT   OUTDCB,(0)          WRITE THE EXTENT HEADER
+         SPACE 1
+         SR    R5,R5               SET CURRENT TT
+         LA    R3,(DEBBASND-DEBBASIC)(,R3)  COMPUTE ADDR OF THE FIRST  ?
+                                             EXTENT
+XT0100   STH   R5,16(,R13)         SAVE CURRENT TT
+         UNPK  OUTLINE+4(5),16(3,R13)  CONVERT CURRENT TT TO HEX DIGITS
+         TR    OUTLINE+4(4),HEXTAB
+         MVI   OUTLINE+4+4,C' '
+         UNPK  OUTLINE+4+4+1(9),(DEBSTRCC-DEBDASD)(5,R3)
+         TR    OUTLINE+4+4+1(8),HEXTAB
+         MVI   OUTLINE+4+4+1+8,C' '
+         UNPK  OUTLINE+4+4+1+8+1(9),(DEBENDCC-DEBDASD)(5,R3)
+         TR    OUTLINE+4+4+1+8+1(8),HEXTAB
+         MVI   OUTLINE+4+4+1+8+1+8,C' '
+         UNPK  OUTLINE+4+4+1+8+1+8+1(3),(DEBNMTRKHI-DEBDASD)(2,R3) V1L3
+         UNPK  OUTLINE+4+4+1+8+1+8+3(5),(DEBNMTRK-DEBDASD)(3,R3)   V1L3
+         TR    OUTLINE+4+4+1+8+1+8+1(6),HEXTAB                     V1L3
+         LA    R0,4+4+1+8+1+8+1+6  LOAD LINE LENGTH                V1L3
+         STH   R0,OUTLINE          STORE IN THE RDW
+         PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         LH    R0,(DEBNMTRK-DEBDASD)(,R3) LOAD NUMBER OF TRACKS IN XTNT
+         N     R0,=A(X'FFFF')      TURN OFF ANY HIGH ORDER BITS
+         AR    R5,R0               COMPUTE TT OF START OF NEXT EXTENT
+         LA    R3,(DEBDASDE-DEBDASD)(,R3)  COMPUTE ADDR OF THE NEXT    ?
+                                             DASD EXTENT
+         BCT   R4,XT0100           GO PROCESS THE EXTENT
+         B     XT0300              AND CONTINUE
+         SPACE 1
+XT0200   L     R0,=C'MS08'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE ERROR MESSAGE
+         B     QUIT                AND EXIT WITH TEARS IN MY EYES
+         SPACE 1
+XT0300   BAL   R14,WRITEBL         WRITE A BLANK LINE
+         L     R0,=A(HDR2)         LOAD ADDR OF THE NEXT HEADER
+         PUT   OUTDCB,(0)          WRITE IT
+         SPACE 1
+         LA    R3,XLIST-(EXNEXT-EXTENT)  LOAD ADDR OF A DUMMY EXTENT   ?
+                                          ENTRY
+         SPACE 1
+         USING EXTENT,R3           DEFINE EXTENT ENTRY ADDRESSABILITY
+         SPACE 1
+XT0400   L     R3,EXNEXT           LOAD ADDR OF THE NEXT EXTENT
+         LTR   R3,R3               TEST IF END OF EXTENTS
+         BZ    XT0900              BR IF SO
+         L     R0,EXSTART          LOAD START OF EXTENT            V1L3
+         BAL   R14,CNVTTT          CONVERT TT TO MBBCCHHR
+         LTR   R15,R15             TEST IF ERROR
+         BZ    XT0500              BR IF NOT
+         MVC   OUTLINE+4+4+6(9),=CL9'******** '
+         B     XT0600
+XT0500   UNPK  OUTLINE+4+4+6+1(9),IOBSEEK+3(5)  CONVERT START OF EXTENT
+         TR    OUTLINE+4+4+6+1(8),HEXTAB         TO HEX DIGITS
+         MVI   OUTLINE+4+4+6+1+8,C' '
+XT0600   UNPK  OUTLINE+4(5),EXSTART(3)
+         TR    OUTLINE+4(4),HEXTAB
+         MVC   OUTLINE+4+4(6),=X'402020202120'
+         L     R0,EXLEN            LOAD LENGTH OF EXTENT
+         CVD   R0,16(,R13)         CONVERT LENGTH TO DECIMAL
+         ED    OUTLINE+4+4(6),16+5(R13)  AND THEN TO DECIMAL DIGITS
+         MVI   OUTLINE+4+4+6,C' '
+         L     R0,EXSTART          LOAD START OF EXTENT            V1L3
+         A     R0,EXLEN            ADD LENGTH OF EXTENT            V1L3
+         BCTR  R0,0                COMPUTE TT OF LAST TRACK IN EXTENT
+         BAL   R14,CNVTTT          CONVERT TT TO MBBCCHHR
+         LTR   R15,R15             TEST RC
+         BZ    XT0700              BR IF OK
+         MVC   OUTLINE+4+4+6+1+8+1(8),=CL9'******** '
+         B     XT0800
+XT0700   UNPK  OUTLINE+4+4+6+1+8+1(9),IOBSEEK+3(5) CONVERT END OF XTNT
+         TR    OUTLINE+4+4+6+1+8+1(8),HEXTAB        TO HEX DIGITS
+XT0800   LA    R0,4+4+6+1+8+1+8    LOAD LINE LENGTH
+         STH   R0,OUTLINE          STORE LENGTH IN THE RDW
+         PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         B     XT0400
+         SPACE 1
+         DROP  R3
+         SPACE 1
+XT0900   L     R15,=A(FMTMEMBR)    LOAD ADDR OF FMTMEMBR
+         CALL  (15)                CALL IT
+         EJECT
+* NOW, WE'RE READY TO DUMP THE DATA SET
+         SPACE 1
+         CNOP  0,8
+         MVC   IOBFLAGS,=AL1(X'42',0,0,0)  INITIALIZE
+         LA    R0,ECB                       THE
+         ST    R0,IOBECBPT                   IOB
+         LA    R0,INDCB
+         ST    R0,IOBDCBPT
+         LA    R0,CCWS
+         ST    R0,IOBSTART
+         LA    R0,HOMEADDR         LOAD ADDR OF THE HOME ADDRESS       ?
+                                    DATA AREA
+         ST    R0,CCWS             SAVE IN FIRST CCW
+         LA    R1,TRKBUF           LOAD ADDR OF THE TRACK BUFFER
+         ST    R1,CCWS+8           SAVE IN SECOND CCW
+         LA    R1,256(,R1)         COMPUTE ADDRESS OF THE NEXT AREA
+         ST    R1,CCWS+16          SAVE IT
+         OC    CCWS(CCWL),CCWMAST  ADD CCW SKELETON TO ADDRESSES
+         USING EXTENT,R10
+         LA    R10,XLIST-(EXNEXT-EXTENT)  LOAD ADDR OF A DUMMY EXTENT
+DMP0100  L     R10,EXNEXT          LOAD ADDR OF THE NEXT EXTENT
+         LTR   R10,R10             TEST IF END OF EXTENTS
+         BZ    QUIT                BR IF SO
+         L     R9,EXSTART          LOAD ADDR OF THE FIRST TRACK    V1L3
+         L     R8,EXLEN            LOAD NUMBER OF TRACKS           V1L3
+DMP0200  LR    R0,R9               COPY TT TO R0
+         BAL   R14,CNVTTT          CONVERT TT TO MBBCCHHR
+         LTR   R15,R15             TEST RC FROM CONVERSION
+         BNZ   QUIT                EXTENT VALUE INVALID, EXIT
+         MVI   ECB,0               RESET THE ECB
+         EXCP  IOB                 START I/O
+         WAIT  1,ECB=ECB           WAIT FOR I/O TO COMPLETE
+         CLI   ECB,X'7F'           TEST I/O COMPLETION
+         BNE   DMP0500             I/O ERROR
+         LH    R5,CCWS+16+6        LOAD INITIAL LENGTH
+         N     R5,=A(X'FFFF')      TURN OFF ANY HIGH ORDER BITS
+         LH    R4,IOBCSW+6         LOAD RESIDUAL COUNT
+         N     R4,=A(X'FFFF')      TURN OFF ANY HIGH ORDER BITS
+         SR    R5,R4               COMPUTE ACTUAL DATA LENGTH READ
+         LA    R5,TRKBUF+256(R5)   COMPUTE END OF DATA IN TRKBUF
+         LA    R3,TRKBUF+256       LOAD ADDR OF THE FIRST COUNT IN     ?
+                                    TRKBUF
+         SPACE 1
+* FORMAT THE TT AND HOME ADDRESS
+         SPACE 1
+         BAL   R14,WRITEBL         WRITE A BLANK LINE
+         L     R1,=A(TRKHDR)       LOAD ADDR OF THE TRACK HEADER
+         MVC   OUTLINE+4(OUTTRKL-4),0(R1)  COPY TRACK HEADER TO OUTLINE
+         ST    R9,12(,R13)         STORE TT                        V1L3
+         UNPK  OUTTRKH(7),13(4,R13)  CONVERT TT TO HEX DIGITS      V1L3
+         TR    OUTTRKH,HEXTAB
+         MVC   OUTTRKD,=X'4020202020202120'  COPY EDIT MASK        V1L3
+         CVD   R9,16(,R13)         CONVERT TT TO DECIMAL
+         ED    OUTTRKD,16+4(R13)   CONVERT TT TO DIGITS            V1L3
+         TM    SWITCH,FMTHA        TEST IF FMTHA
+         BO    HACODE              BR IF SO
+         MVC   OUTTRKD+L'OUTTRKD+1(4),5(R1)   TERMINATE THE OUTPUT LINE
+         LA    R0,OUTTRKD+L'OUTTRKD+1+4-OUTLINE  LOAD NEW LENGTH
+         STH   R0,OUTLINE          STORE NEW LENGTH
+         B     NOHACODE            AND CONTINUE
+HACODE   UNPK  OUTTRKHA(11),HOMEADDR(6)  CONVERT FIRST 5 BYTES OF THE  ?
+                                           HOME ADDRESS TO HEX
+         TR    OUTTRKHA,HEXTAB
+         MVI   OUTTRKHA+L'OUTTRKHA,C' '  FIX UP CLOBBERED BYTE
+         LA    R0,OUTTRKL          LOAD LENGTH
+         STH   R0,OUTLINE          STORE LENGTH
+NOHACODE PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         SPACE 1
+         L     R1,CCWS+8           LOAD ADDRESS OF THE R0 DATA AREA
+         SR    R0,R0               SET R0 = 0
+         N     R1,=A(X'FFFFFF')    TURN OFF THE HIGH ORDER BITS
+         IC    R0,5(,R1)           LOAD KEY LENGTH
+         LH    R15,6(,R1)          LOAD DATA LENGTH
+         N     R15,=A(X'FFFF')     TURN OFF HIGH ORDER BITS
+         AR    R0,R15              ADD KEY LENGTH TO DATA LENGTH
+         C     R0,=F'256'          TEST IF VALID
+         BH    DMP0300             BR IF NOT
+         TM    SWITCH,FMTR0        TEST IF FMTR0
+         BZ    DMP0400             SKIP IF R0 NOT WANTED
+         L     R15,=A(DUMPREC)     LOAD ADDRESS OF DUMPREC
+         CALL  (15)                WRITE R0
+         B     DMP0400             AND CONTINUE
+*                               ----+----1----+----2----+----3----+---
+DMP0300  MVC   OUTLINE+4(38),=C'*** R0 FORMAT NOT SUPPORTED, COUNT IS '
+         UNPK  OUTLINE+4+38(9),0(5,R1)
+         UNPK  OUTLINE+4+38+8(9),4(5,R1)
+         TR    OUTLINE+4+38(16),HEXTAB
+         MVC   OUTLINE+4+38+16(4),=C' ***'
+         LA    R0,4+38+16+4
+         STH   R0,OUTLINE
+         PUT   OUTDCB,OUTLINE
+DMP0400  LR    R1,R3               COPY CURRENT COUNT ADDR TO R1
+         L     R15,=A(DUMPREC)     LOAD ADDRESS OF DUMPREC
+         CALL  (15)                WRITE THE RECORD
+         SR    R1,R1               SET R1 = 0
+         SR    R0,R0               SET R0 = 0
+         IC    R0,5(,R3)           LOAD LENGTH OF KEY AREA
+         LH    R1,6(,R3)           LOAD LENGTH OF DATA AREA
+         N     R1,=A(X'FFFF')      TURN OFF HIGH ORDER BITS
+         AR    R1,R0               ADD KEY AND DATA AREA
+         LA    R3,8(R1,R3)         COMPUTE ADDRESS OF THE NEXT COUNT
+         CR    R3,R5               TEST IF END OF TRACK
+         BL    DMP0400             BR IF NOT
+         LA    R9,1(,R9)           BUMP TT IN EXTENT
+         BCT   R8,DMP0200          GO DO NEXT TRACK IN EXTENT
+         B     DMP0100             GO DO THE NEXT EXTENT
+         SPACE 1
+DMP0500  DC    H'0'                I/O ERROR - JUST ABEND
+         EJECT
+* CLOSE EVERYTHING, RELEASE EVERYTHING, AND GO HOME
+         CNOP  0,8
+QUIT     L     R10,PDLPTR          LOAD ADDR OF THE PDL
+         LTR   R10,R10             TEST IF PDL IS PRESENT
+         BZ    QU0200              BR IF NOT
+         TM    OUT.DCBOFLGS,DCBOFOPN TEST IF OUTPUT DCB IS OPEN
+         BZ    QU0200              BR IF NOT
+         LA    R14,AWORK           LOAD ADDRESS OF A WORK AREA
+         LH    R1,IDOUT-IDPDL+4(,R10)  LOAD LENGTH OF OUTPUT DSN
+         L     R0,IDOUT-IDPDL+0(,R10)  LOAD ADDRESS OF OUTPUT DSN
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY DSN TO WORK AREA
+         TM    IDOUT-IDPDL+8+6(R10),X'80'  TEST IF MEMBER NAME PRESENT
+         BZ    QU0100              BR IF NOT
+         MVI   0(R14),C'('         ADD A PAREN
+         LA    R14,1(,R14)         BUMP OUTPUT POINTER
+         LH    R1,IDOUT-IDPDL+8+4(,R10)  LOAD LENGTH OF THE MEMBER NAME
+         L     R0,IDOUT-IDPDL+8+0(,R10)  LOAD ADDR OF THE MEMBER NAME
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY MEMBER NAME TO WORK AREA
+         MVI   0(R14),C')'         ADD A PAREN
+         LA    R14,1(,R14)         BUMP OUTPUT POINTER
+QU0100   LA    R1,AWORK            LOAD START WORK AREA
+         ST    R1,MTINSRTS         SAVE ADDR OF DSNAME
+         SR    R14,R1              COMPUTE LENGTH OF DSNAME
+         STC   R14,MTINSRTS        STORE LENGTH
+         L     R0,=C'MS00'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE MESSAGE
+QU0200   DELETE EPLOC=IKJEFF02     DELETE IKJEFF02
+         TM    OUT.DCBOFLGS,DCBOFOPN  TEST IF OUTPUT DCB IS OPEN
+         BZ    QU0300              BR IF NOT
+         MVC   OPENPARM,OPENMAST   COPY MASTER OPEN PARM LIST TO WORK  ?
+                                    AREA
+         CLOSE (OUTDCB),           CLOSE THE                           ?
+               MF=(E,OPENPARM)      OUTPUT DCB
+         TM    OUT.DCBBUFCB+3,1    TEST IF BUFFER POOL ATTACHED TO DCB
+         BO    QU0300              BR IF NOT
+         FREEPOOL OUTDCB           RELEASE THE BUFFER POOL
+QU0300   TM    IN.DCBOFLGS,DCBOFOPN  TEST IF INPUT DCB IS OPEN
+         BZ    QU0400              BR IF NOT
+         MVC   OPENPARM,OPENMAST   COPY MASTER OPEN PARM LIST TO WORK  ?
+                                    AREA
+         CLOSE (INDCB),            CLOSE THE                           ?
+               MF=(E,OPENPARM)      INPUT DCB
+QU0400   LA    R3,DDNAMEN          SET R3 = 2
+         LA    R2,DDNAMES          SET R3 = START OF DDNAMES
+QU0500   TM    0(R2),255-C' '      TEST IF ALLOCATED
+         BZ    QU0600              BR IF NOT
+         L     R1,=A(F1PARM)       LOAD ADDRESS OF MASTER PARMS
+         MVC   AWORK(F1PARML),0(R1)  COPY MASTER PARM LIST TO WORK AREA
+         MVC   F1DDN-F1PARM+AWORK,0(R2)  COPY DDNAME TO WORK AREA
+         LA    R1,AWORK            LOAD START OF WORK AREA
+         L     R15,=A(DYNRELOC)    LOAD ADDR OF DYNRELOC
+         CALL  (15)                RELOCATE THE ADDRESS CONSTANTS
+         DYNALLOC ,                RELEASE THE ALLOCATION
+QU0600   LA    R2,DDNAMEL(,R2)     LOAD ADDR OF THE NEXT DDNAME
+         BCT   R3,QU0500           TRY THE NEXT DDNAME
+QU0700   L     R1,XLIST            LOAD ADDR OF EXTENT ENTRY
+         LTR   R1,R1               TEST IF END
+         BZ    QU0800              BR IF SO
+         LA    R0,EXTENTL          LOAD LENGTH OF AN EXTENT ENTRY
+         MVC   XLIST,EXNEXT-EXTENT(R1)  REMOVE ENTRY FROM EXTENT LIST
+         FREEMAIN R,               FREE THE EXTENT ENTRY               ?
+               LV=(0),                                                 ?
+               A=(1)
+         B    QU0700
+QU0800   IKJRLSA PDLPTR            RELEASE THE PDL
+         L     R0,=A(WORKL)        LOAD LENGTH OF THE WORK AREA
+         L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         FREEMAIN R,LV=(0),A=(R11) RELEASE THE WORK AREA
+         RETURN (14,12),T,RC=0     RESTORE REGS & RETURN TO CALLER
+         EJECT
+* Write an error message using IKJEFF02
+*
+*  R0  -- Message code (the code itself, not its address)
+*  R13 -- Standard save area
+*  R14 -- Return address
+*
+* The IKJEFF02 parameter list is initialized before this routine
+* is called, as well as any MTINSRTS values.
+         SPACE 1
+         CNOP  0,8
+         SPACE 1
+PUTERR   L     R15,=A(PUTERRD)     LOAD ADDR OF REAL PUTERR ROUTINE
+         BR    R15                 BR TO IT
+         EJECT
+* Write a blank line
+         SPACE 1
+         CNOP  0,8
+WRITEBL  SAVE  (14,2)              SAVE REGISTERS
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA TO THE
+         ST    R13,4(,R15)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH A NEW SAVE AREA
+         L     R0,=A(BLANKL)       LOAD ADDRESS OF A BLANK LINE
+         PUT   OUTDCB,(0)          WRITE THE LINE
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN (14,2),T,RC=0      RESTORE REGS & RETURN TO CALLER
+         EJECT
+* VALIDATE TT (IN REGISTER 0)
+         SPACE 1
+         CNOP  0,8
+VALTT    SAVE  (14,2)              SAVE REGISTERS
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA TO THE
+         ST    R13,4(,R15)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH A NEW SAVE AREA
+         BAL   R14,CNVTTT          CONVERT IT
+         LTR   R15,R15             TEST RC
+         BZ    VALTT200            BR IF OK
+         LA    R14,OUTLINE+4       LOAD ADDR
+         L     R0,0(,R9)           LOAD START OF FIRST CCHH
+         LH    R1,4(,R9)           LOAD LENGTH
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY
+         TM    8+6(R9),X'80'       TEST IF SECOND ARG PRESENT
+         BZ    VALTT100            BR IF NOT
+         MVI   0(R14),C':'         INSERT COLON
+         LA    R14,1(,R14)         BUMP POINTER
+         L     R0,8+0(,R9)         LOAD START OF SECOND CCHH
+         LH    R1,8+4(,R9)         LOAD LENGTH
+         LR    R15,R1              COPY LENGTH TO R15
+         MVCL  R14,R0              COPY
+VALTT100 LA    R15,OUTLINE+4       LOAD START OF TEXT
+         SR    R14,R15             COMPUTE LENGTH
+         ST    R15,MTINSRTS+4      STORE START OF TEXT
+         STC   R14,MTINSRTS+4      SAVE LENGTH OF TEXT
+         LA    R0,=CL14'RELATIVE TRACK'  LOAD ADDR OF DESCRIPTOR
+         O     R0,=AL1(14,0,0,0)   ADD LENGTH
+         STCM  R0,B'1111',MTINSRTS STORE
+         L     R0,=C'MS07'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE ERROR MESSAGE
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         LM    R14,R2,12(R13)      RESTORE REGS
+         BR    R14                 ABD RETURN TO +0
+VALTT200 L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         LM    R14,R2,12(R13)      RESTORE REGS
+         B     4(R14)              AND RETURN
+         EJECT
+* Convert TT (in register 0) to MBBCCHHR using the IBM IEAPCNVT
+* function
+         SPACE 1
+         CNOP  0,8
+CNVTTT   SAVE  (14,2)              SAVE REGISTERS
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA TO THE
+         ST    R13,4(,R15)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH A NEW SAVE AREA
+         SLL   R0,8                CONVERT 00TT TO 0TT0            V1L3
+         L     R1,IN.DCBDEBAD      LOAD ADDR OF THE DEB
+         N     R1,=A(X'FFFFFF')    TURN THE HIGH ORDER BYTE OFF    V1L3
+         LA    R2,IOBSEEK          LOAD ADDR OF IOBSEEK
+         L     R14,CVTPTR          LOAD ADDR OF THE CVT            V1L3
+         L     R15,CVTPCNVT-CVTMAP(,R14)  LOAD ADDR OF TTRN TO     V1L3>
+                                           MBBCCHHR CONVERSION ROUTINE
+         STM   R8,R13,12(R13)      SAVE REGS 8 TO 13
+         LR    R8,R13              COPY R13 TO R8
+         TM    CVTDCB-CVTMAP(R14),CVTOSEXT  TEST IF EXTENSION AREA V1L3
+         BZ    LARGEA              BR IF NOT                       V1L3
+         TM    CVTOSLV5-CVTMAP(R14),CVTZOS_V1R7  TEST IF ZOS 1.7   V1L3
+         BZ    LARGEA              BR IF NOT                       V1L3
+         SR    R13,R13             INDICATE N = 0                  V1L3
+         BAS   R14,12(,R15)        USE THE NEW TTR TO CCHHR ROUTINE 1L3
+         B     LARGEB-*(,R14)      AND CONTINUE                    V1L3
+LARGEA   SLL   R0,8                CONVERT 0TT0 TO TT00            V1L3
+         BALR  R14,R15             CONVERT TTRN TO MBBCCHHR
+LARGEB   LM    R8,R13,12(R8)       RESTORE REGS 8 THROUGH 13       V1L3
+         L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,2),T,RC=(15)   RESTORE REGS & RETURN TO CALLER
+         EJECT
+* Convert true track to relative tract
+*
+*   R1  -- Address of the DEB
+*   R2  -- True track value
+*   R13 -- Standard save area
+*   R14 -- Return address
+         SPACE 1
+         USING DEBBASIC,R1         ESTABLISH DEB ADDRESSABILITY
+         USING DEBDASD,DEBBASND    ESTABLISH ADDRESSABILITY OF 1ST     >
+                                    EXTENT ENTRY IN THE DEB
+         USING UCBOB,R6            ESTABLISH UCB ADDRESSABILITY
+         USING CVTMAP,R7           ESTABLISH CVT ADDRESSABILITY
+         SPACE 1
+CNVTTTT  SAVE  (14,10)             SAVE REGISTERS
+         XC    AWORK(8),AWORK      CLEAR AWORK
+         LR    R5,R2               COPY TRUE TRACK VALUE TO R5
+         L     R6,DEBUCBAD         LOAD ADDRESS OF THE UCB
+         SR    R4,R4               SET R4 = 0
+         N     R6,=A(X'FFFFFF')    REMOVE EXTENT MASK FROM ADDRESS
+         SR    R15,R15             SET R15 = 0
+         IC    R15,UCBTBYT4        LOAD DEVICE TYPE CODE
+         L     R7,CVTPTR           LOAD ADDR OF THE CVT
+         L     R7,CVTZDTAB         LOAD ADDR OF THE DEVICE TABLE
+         USING DVCTI,R7            ESTABLISH ADDRESSABILITY
+         LA    R14,DVCTYPMK        LOAD MASK
+         NR    R15,R14             TRANSLATE
+         IC    R15,DVCTIOFF(R15)   LOAD OFFSET OF ATTRIBUTES
+         AR    R7,R15              COMPUTE ADDR OF THE DEVICE          >
+                                    ATTRIBUTES FOR THIS DEVICE
+         USING DVCT,R7             ESTABLISH ADDRESSABILITY
+         LH    R0,DVCTRK           LOAD TRACKS / CYLINDER
+         DR    R4,R0               CONVERT TRUE TRACK TO CC IN R5      >
+                                    AND HH IN R4
+         LR    R1,R5               COPY CC TO R0
+         SLL   R1,16               SHIFT
+         OR    R1,R4               ADD HH
+         STCM  R1,B'1111',AWORK+3  STORE CCHH IN AWORK
+         LM    R14,R10,12(R13)     RESTORE REGS
+         LA    R2,AWORK            LOAD ADDR OF MBBCCHHR AREA
+         L     R15,=A(CNVTCCHH)    LOAD ADDR OF CNVTCCHH
+         BR    R15                 CONVERT CCHH TO RELATIVE TT
+         DROP  R1,R6,R7            KILL ADDRESSABILITY
+         SPACE 1
+         DROP  ,                   KILL ALL ADDRESSABILITY
+         EJECT
+CCWMAST  CCW   X'1A',*-*,X'40'+X'20',L'HOMEADDR       READ HOME ADDRESS
+         CCW   X'16',*-*,X'40'+X'20',256              READ RECORD 0
+         CCW   X'5E',*-*,X'20',X'FFFF'   READ MULTIPLE COUNT KEY & DATA
+CCWL     EQU   *-CCWMAST
+CALLPARS LINK  SF=L,                                                   ?
+               EP=IKJPARS
+IKJEFF02 DC    CL8'IKJEFF02'
+EXOFF    DC    A(EXNEXT-EXTENT)    OFFSET FOR QSORTL
+OPENMAST OPEN  (*-*,INPUT),MF=L
+         SPACE 1
+OUTXLST  DC    0A(0),AL1(X'85'),AL3(SETODCB)
+HAVAL    DC    AL1(255-FMTHA-FMTR0,0,255,FMTHA+FMTR0,255-FMTHA-FMTR0,0)
+R0VAL    DC    AL1(255,0,255,FMTR0,255-FMTR0,0)
+COMBVAL  DC    AL1(255,0,255,COMBKEY,255-COMBKEY,0)
+         DC    0D'0'
+         LTORG ,
+         DC    0D'0'
+HEXTAB   EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+HEXCNVT  EQU   *-C'A'
+         DC    X'0A0B0C0D0E0F'
+*        ORG   HEXCNVT+C'0'
+         DC    XL((HEXCNVT+C'0')-*)'00'
+         DC    X'00010203040506070809'
+         ORG   ,
+         EJECT
+* Convert a CCHH value to a relative track value
+* This routine is used rather than the IBM routine because the IBM
+* routine requires that the extent be known.  In addition, this
+* routine uses semi-standard linkage, rather than the even less
+* standard linkage used by the IBM routine.
+*
+*   R1  -- Address of the DEB
+*   R2  -- Address of an MBBCCHHR data area, with only the CCHH
+*          portion filled in
+*   R13 -- Standard save area
+*   R14 -- Return address
+         SPACE 1
+         CNOP  0,8
+         USING *,R12               ESTABLISH ADDRESSABILITY
+CNVTCCHH SAVE  (14,12),,*          SAVE REGISTERS
+         LR    R12,R15             COPY EP ADDR TO R12
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA TO THE
+         ST    R13,4(,R15)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH A NEW SAVE AREA
+         USING DEBBASIC,R1         ESTABLISH DEB ADDRESSABILITY
+         SR    R3,R3               SET R3 = 0
+         SR    R4,R4               SET R4 = 0
+         ICM   R4,B'0001',DEBNMEXT LOAD NUMBER OF EXTENTS
+         BZ    CVCH0300            BR IF NONE
+         LA    R5,DEBBASND         LOAD END OF DEB BASIC AREA
+         DROP  R1                  KILL DEBBASIC ADDRESSABILITY
+         USING DEBDASD,R5          ESTABLISH DASD EXTENT ADDRESSING
+         L     R6,DEBUCBAD         LOAD ADDRESS OF THE UCB
+         N     R6,=A(X'FFFFFF')    TURN OFF THE HIGH ORDER BITS
+CVCH0100 CLC   3(4,R2),DEBSTRCC    COMPARE SEARCH CCHH WITH START CCHH ?
+                                    IN EXTENT
+         BL    CVCH0200            BR IF ADDRESS NOT IN EXTENT
+         CLC   3(4,R2),DEBENDCC    COMAPRE SEARCH CCHH WITH LAST CCHH  ?
+                                    IN EXTENT
+         BNH   CVCH0400            BR IF ADDRESS IN EXTENT
+CVCH0200 LH    R0,DEBNMTRK         LOAD NUMBER OF TRACKS IN EXTENT
+         N     R0,=A(X'FFFF')      TURN OFF THE HIGH ORDER BITS    V1L3
+         ICM   R0,B'0100',DEBNMTRKHI  LOAD HIGH ORDER BITS         V1L3
+         AR    R3,R0               ADD NUMBER OF TRACKS IN EXTENT      ?
+                                    TO TOTAL TRACKS FOUND SO FAR
+         LA    R5,DEBDASDE         COMPUTE ADDR OF THE NEXT EXTENT
+         BCT   R4,CVCH0100         TRY THE NEXT EXTENT
+CVCH0300 LA    R15,4               SET RC = 4
+         B     CVCH0500            AND EXIT
+CVCH0400 ICM   R1,B'1111',3(R2)    LOAD START OF CCHH IN INPUT
+         BAL   R14,GETTRUE         GET TRUE TT FOR THE CCHH
+         LR    R2,R1               COPY RESULT TO R2
+         ICM   R1,B'1111',DEBSTRCC LOAD ADDR OF CCHH FOR START OF      ?
+                                    EXTENT
+         BAL   R14,GETTRUE         GET TRUE TT FOR THE CCHH
+         SR    R2,R1               COMPUTE RELATIVE TT IN EXTENT
+         LA    R1,0(R2,R3)         COMPUTE RELATIVE TT IN DATA SET
+*        SLL   R1,16               CONVERT 00TT TO TT00            V1L3
+         L     R15,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         ST    R1,20(,R15)         STORE RELATIVE TT INTO THE R0       ?
+                                    POSITION IN THE SAVE AREA
+         SR    R15,R15             SET RC = 0
+CVCH0500 L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T,RC=(15)  RESTORE REGS & RETURN TO CALLER
+         SPACE 1
+         DROP  R5
+         EJECT
+* Translate a CCHH value to a "true track" value.  A "true track" is
+* the track number, starting with track 0 at CCHH 00000000.
+*
+*  R1  -- CCHH value
+*  R6  -- UCB address
+*  R13 -- Standard Save Area
+*  R14 -- Return address
+         SPACE 1
+         USING UCBOB,R6            ESTABLISH UCB ADDRESSABILITY
+         CNOP  0,8
+GETTRUE  SAVE  (14,10)             SAVE RETURN CODE
+         LR    R2,R1               COPY CCHH TO R2
+         LR    R3,R1               COPY CCHH TO R3
+         SRL   R2,16               REMOVE HH
+         N     R3,=A(X'FFFF')      REMOVE CC
+         L     R15,CVTPTR          LOAD ADDR OF THE CVT
+         L     R15,CVTZDTAB-CVTMAP(,R15)  LOAD ADDR OF THE TABLE
+         LA    R14,DVCTYPMK        LOAD MASK
+         N     R14,UCBTYP          LOAD DEVICE TYPE
+         IC    R14,DVCTIOFF-DVCTI(R14,R15)  LOAD OFFSET OF THE DEVICE  ?
+                                             ATTRIBUTES
+         AR    R15,R14             COMPUTE ADDRESS OF THE DEVICE       ?
+                                    ATTRIBUTES
+         MH    R2,DVCTRK-DVCT(R15) MULTIPLY CC BY TRKS PER CYLINDER
+         LA    R1,0(R3,R2)         COMPUTE THE TRUE TRACK
+         ST    R1,24(,R13)         OVERLAY THE ORIGINAL R1 WITH THE    ?
+                                    TRUE TRACK
+         RETURN (14,10),T          RESTORE REGS & RETURN TO CALLER
+         SPACE 1
+         DROP  R6,R12              KILL UCB ADDRESSABILITY
+         SPACE 1
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+MASTDCBS DC    0F'0'
+INDCBM   DCB   MACRF=E,DDNAME=FILLMEIN,EXLST=*-*,DCBE=*-*          V1L3
+OUTDCBM  DCB   MACRF=PM,DDNAME=FILLMEIN,DSORG=PS,EXLST=OUTXLST
+INDCBEM  DCBE  BLOCKTOKENSIZE=LARGE                                V1L3
+         POP   PRINT
+         EJECT
+         CNOP  0,8
+A1PARM   DC    A(X'80000000'+A1RB-A1PARM)
+         SPACE 1
+A1RB DC 0A(0),AL1(S99RBEND-S99RB,S99VRBAL,S99NOCNV+S99NOMNT+S99NOMIG,0)
+         DC    2AL2(0)
+         DC    A(A1TXTPP-A1PARM)
+         DC    2A(0)
+         SPACE 1
+A1TXTPP  DC    A(A1KEY01-A1PARM,A1KEY02-A1PARM,A1KEY03-A1PARM)
+         DC    A(A1KEY04-A1PARM,A1KEY05-A1PARM,A1KEY06-A1PARM)
+         DC    A(X'80000000'+A1KEY07-A1PARM)
+         SPACE 1
+A1KEY01  DC    AL2(DALDSNAM,1,L'A1DSN)    SET TO 0 IF VTOC
+A1DSN    DC    CL44' '
+A1KEY02  DC    AL2(*-*,1,L'A1MEMBER)       SET TO DALMEMBR IS REQUIRED
+A1MEMBER DC    CL8' '
+A1KEY03  DC    AL2(DALRTDDN,1,L'A1DDN)
+A1DDN    DC    CL8' '
+A1KEY04  DC    AL2(DALRTORG,1,L'A1DSORG)  SET TO 0 IF VTOC
+A1DSORG  DC    AL(L'DCBDSORG)(0)
+A1KEY05  DC    AL2(*-*,1,L'A1VOL)         SET TO DALVLSER IF VOLSER
+A1VOL    DC    CL6' '
+A1KEY06  DC    AL2(*-*,1,L'A1DEVT)        SET TO DALUNIT IF VOLSER
+A1DEVT   DC    C'SYSALLDA'
+A1KEY07  DC    AL2(DALSTATS,1,L'A1STATS)
+A1STATS  DC    AL1(DISPSHR)
+         SPACE 1
+A1PARML  EQU   *-A1PARM
+         EJECT
+         CNOP  0,8
+A2PARM   DC    A(X'80000000'+A2RB-A2PARM)
+         SPACE 1
+A2RB     DC    0A(0),AL1(S99RBEND-S99RB,S99VRBAL,0,0)
+         DC    2AL2(0)
+         DC    A(A2TXTPP-A2PARM)
+         DC    2A(0)
+         SPACE 1
+A2TXTPP  DC    A(A2KEY01-A2PARM,A2KEY02-A2PARM,A2KEY03-A2PARM)
+         DC    A(A2KEY04-A2PARM,A2KEY05-A2PARM,A2KEY06-A2PARM)
+         DC    A(A2KEY07-A2PARM,A2KEY08-A2PARM,A2KEY09-A2PARM)
+         DC    A(X'80000000'+A2KEY10-A2PARM)
+         SPACE 1
+A2KEY01  DC    AL2(DALDSNAM,1,L'A2DSN)
+A2DSN    DC    CL44' '
+A2KEY02  DC    AL2(*-*,1,L'A2MEMBER)  SET TO DALMEMBER IF MEMBER NAME
+A2MEMBER DC    CL8' '
+A2KEY03  DC    AL2(DALRTDDN,1,L'A2DDN)
+A2DDN    DC    CL8' '
+A2KEY04  DC    AL2(DALTRK,0)
+A2KEY05  DC    AL2(DALPRIME,1,3),AL3(200)
+A2KEY06  DC    AL2(DALSECND,1,3),AL3(200)
+A2KEY07  DC    AL2(0,1,L'A2DIR)      SET TO DALDIR IF MEMBER NAME
+A2DIR    DC    AL3(5)
+A2KEY08  DC    AL2(DALRLSE,0)
+A2KEY09  DC    AL2(DALSTATS,1,1),AL1(DISPNEW)
+A2KEY10  DC    AL2(DALNDISP,1,1),AL1(DISPCAT)
+         SPACE 1
+A2PARML  EQU   *-A2PARM
+         EJECT
+         CNOP  0,8
+F1PARM   DC    A(X'80000000'+F1RB-F1PARM)
+         SPACE 1
+F1RB     DC    0A(0),AL1(S99RBEND-S99RB,S99VRBUN,0,0)
+         DC    2AL2(0)
+         DC    A(F1TXTPP-F1PARM)
+         DC    2A(0)
+         SPACE 1
+F1TXTPP  DC    A(F1KEY01-F1PARM,X'80000000'+F1KEY02-F1PARM)
+         SPACE 1
+F1KEY01  DC    AL2(DUNDDNAM,1,L'F1DDN)
+F1DDN    DC    CL8' '
+F1KEY02  DC    AL2(DUNUNALC,0)
+         SPACE 1
+F1PARML  EQU   *-F1PARM
+         EJECT
+XTABLE   DC    AL2(OUTHEX0-WORK,OUTBYTE0-WORK)
+XTABLEL  EQU   *-XTABLE
+         DC    AL2(OUTHEX1-WORK,OUTBYTE1-WORK)
+         DC    AL2(OUTHEX2-WORK,OUTBYTE2-WORK)
+         DC    AL2(OUTHEX3-WORK,OUTBYTE3-WORK)
+         DC    AL2(OUTHEX4-WORK,OUTBYTE4-WORK)
+         DC    AL2(OUTHEX5-WORK,OUTBYTE5-WORK)
+         DC    AL2(OUTHEX6-WORK,OUTBYTE6-WORK)
+         DC    AL2(OUTHEX7-WORK,OUTBYTE7-WORK)
+         DC    AL2(OUTHEX8-WORK,OUTBYTE8-WORK)
+         DC    AL2(OUTHEX9-WORK,OUTBYTE9-WORK)
+         DC    AL2(OUTHEXA-WORK,OUTBYTEA-WORK)
+         DC    AL2(OUTHEXB-WORK,OUTBYTEB-WORK)
+         DC    AL2(OUTHEXC-WORK,OUTBYTEC-WORK)
+         DC    AL2(OUTHEXD-WORK,OUTBYTED-WORK)
+         DC    AL2(OUTHEXE-WORK,OUTBYTEE-WORK)
+         DC    AL2(OUTHEXF-WORK,OUTBYTEF-WORK)
+XTABLEE  EQU   *-XTABLEL
+         SPACE 2
+*                0----+----1----+
+TRKHDR   DC    C'     **** TRACK '
+         DC    CL6' '                                              V1L3
+         DC    CL8' ',C'     HOME ADDRESS '                        V1L3
+         DC    CL10' ',C' ****'
+         SPACE 1
+RECHDR   DC    C'  ** COUNT '
+         DC    C'CCCCHHHHRRKKLLLL',C'   TTR '
+         DC    C'TTTTTTRR',C' **'                                  V1L3
+         SPACE 1
+BLANKL   DC    AL2(BLANKLL,0),C' ' A BLANK LINE
+BLANKLL  EQU   *-BLANKL
+         SPACE 1
+HDR1     DC    AL2(HDR1L,0),C'DATA SET EXTENTS --'
+HDR1L    EQU   *-HDR1
+         SPACE 1
+HDR2     DC    AL2(HDR2L,0),C'DUMPED EXTENTS --'
+HDR2L    EQU   *-HDR2
+         EJECT
+         CNOP  0,8
+         USING *,R10
+         USING WORK,R11
+         USING IDUMP,R12
+         SPACE 1
+DUMPREC  SAVE  (14,12),,*          SAVE REGISTERS
+         LR    R10,R15             COPY EP ADDRESS TO R10
+         LA    R15,72(,R13)        COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO THE
+         ST    R15,8(,R13)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         LR    R3,R1               COPY RECORD ADDRESS TO R3
+         SPACE 1
+* WRITE THE COUNT DATA FOR THE RECORD
+         SPACE 1
+         BAL   R14,WRITEBL         WRITE A BLANK LINE
+         L     R1,=A(RECHDR)       COPY RECORD HEADER TO OUTLINE
+         MVC   OUTLINE+4(OUTCNTL-4),0(R1)
+         UNPK  OUTCNT(9),0(5,R3)   CONVERT COUNT DATA
+         UNPK  OUTCNT+8(9),4(5,R3)  TO HEXADECIMAL DIGITS
+         TR    OUTCNT,HEXTAB
+         MVI   OUTCNT+16,C' '
+         STCM  R9,B'0111',16(R13)  SAVE THE CURRENT TRACK          V1L3
+         MVC   19(1,R13),4(R3)      ADD THE R                      V1L3
+         UNPK  OUTTTR(9),16(5,R13)   CONVERT TTR TO                V1L3
+         TR    OUTTTR,HEXTAB          TO HEXADECIMAL DIGITS
+         MVI   OUTTTR+L'OUTTTR,C' '
+         LA    R0,OUTCNTL          LOAD LINE LENGTH
+         STH   R0,OUTLINE          STORE LINE LENGTH IN THE RDW
+         PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         SPACE 1
+* DUMP THE KEY AND DATA AREAS
+         SPACE 1
+         TM    SWITCH,COMBKEY      TEST IF COMBINEKEY SPECIFIED
+         BZ    DMPR0100            BR IF NOT
+         SR    R0,R0               SET R0 = 0
+         IC    R0,5(,R3)           LOAD KEY LENGTH
+         AH    R0,6(,R3)           ADD DATA LENGTH
+         LA    R1,8(,R3)           COMPUTE START OF KEY AND DATA AREA
+         L     R15,=A(DUMP)        LOAD START OF DUMP ROUTINE
+         CALL  (15)                DUMP THE KEY AREA
+         B     DMPR0300            AND EXIT
+DMPR0100 SR    R0,R0               SET R0 = 0
+         ICM   R0,B'0001',5(R3)    LOAD KEY LENGTH
+         BZ    DMPR0200            BR IF NO KEY DATA
+         LA    R1,8(,R3)           LOAD START OF DATA AREA
+         L     R15,=A(DUMP)        LOAD START OF DUMP ROUTINE
+         CALL  (15)                DUMP THE KEY AREA
+DMPR0200 SR    R1,R1               SET R1 = 0
+         IC    R1,5(,R3)           LOAD LENGTH OF KEY
+         LH    R0,6(,R3)           LOAD LENGTH OF DATA
+         LA    R1,8(R1,R3)         COMPUTE START OF DATA AREA
+         N     R0,=A(X'FFFF')      TURN OFF ANY HIGH ORDER BITS IN     ?
+                                    IN DATA LENGTH
+         BZ    DMPR0300            BR IF NO DATA AREA
+         L     R15,=A(DUMP)        LOAD START OF DUMP ROUTINE
+         CALL  (15)                DUMP THE DATA AREA
+DMPR0300 L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS AND RETURN TO CALLER
+         EJECT
+         CNOP  0,8
+         USING *,R10
+         USING WORK,R11
+         USING IDUMP,R12
+         SPACE 1
+DUMP     SAVE  (14,12),,*          SAVE REGISTERS
+         LR    R10,R15             COPY EP ADDRESS TO R10
+         LA    R15,72(,R13)        COMPUTE ADDR OF THE NEXT SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO THE
+         ST    R15,8(,R13)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         LR    R3,R1               COPY START OF DATA TO R3
+         LR    R2,R0               COPY LENGTH OF DATA TO R2
+         AR    R2,R3               COMPUTE END OF DATA
+         L     R0,=A(BLANKL)       LOAD ADDR OF A BLANK LINE
+         PUT   OUTDCB,(0)          WRITE A BLANK LINE
+         LR    R4,R3               COPY START OF DATA TO R4
+DUMP0100 LR    R0,R3               COPY START OF LINE TO R0
+         SR    R0,R4               COMPUTE OFFSET
+         STH   R0,16(,R13)         STORE OFFSET IN THE WORK AREA
+         MVI   OUTLINE+4,C' '
+         MVC   OUTLINE+5(79),OUTLINE+4
+         MVI   OUTLEFTS,C'*'
+         MVI   OUTRITS,C'*'        ADD CHARACTERS
+         UNPK  OUTOFFH(5),16(3,R13)  CONVERT OFFSET TO HEX
+         TR    OUTOFFH(4),HEXTAB
+         MVC   OUTOFFD,=X'402020202120'  COPY EDIT MASK
+         CVD   R0,16(,R13)
+         ED    OUTOFFD,16+5(R13)
+         LM    R15,R1,=A(XTABLE,XTABLEL,XTABLEE)
+DUMP0200 CR    R3,R2               TEST IF END OF DATA IN RECORD
+         BNL   DUMP0300            BR IF SO
+         LH    R14,2(,R15)         LOAD OFFSET
+         AR    R14,R11             COMPUTE ADDRESS
+         MVC   0(1,R14),0(R3)      COPY DATA
+         LH    R14,0(,R15)         LOAD OFFSET
+         AR    R14,R11             COMPUTE ADDRESS
+         UNPK  0(3,R14),0(2,R3)    CONVERT
+         TR    0(2,R14),HEXTAB       TO HEX DIGITS
+         MVI   2(R14),C' '         FIX UP CLOBBERED BYTE
+         LA    R3,1(,R3)           BUMP
+         BXLE  R15,R0,DUMP0200     AND CONTINUE
+DUMP0300 TR    OUTCHAR,TRTAB
+         LA    R0,OUTDUMPL         LOAD LENGTH OF LINE
+         STH   R0,OUTLINE          SAVE THE LENGTH
+         PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         CR    R3,R2               TEST IF END OF RECORD
+         BNL   DUMP0600            BR IF NOT END OF RECORD
+         LA    R0,16               SET R0 = 16
+         LR    R1,R3               COPY START OF NEXT LINE TO R1
+         SR    R1,R0               COMPUTE START OF LINE WE JUST DID
+         LA    R0,16(,R3)          COMPUTE END OF CURRENT LINE
+         CR    R0,R2               TEST IF END OF RECORD
+         BNL   DUMP0100            ALWAYS PRINT LAST SEGMENT OF RECORD
+         CLC   0(16,R1),0(R3)      TEST IF EQUAL
+         BNE   DUMP0100            BR IF NOT
+* AT LEAST ONE DUPLICATE LINE DETECTED -- FIND END OF RANGE
+DUMP0400 LA    R3,16(,R3)          COMPUTE START OF NEXT
+         LA    R0,16(,R3)          COMPUTE END OF NEXT
+         CR    R0,R2               TEST IF END OF RECORD
+         BNL   DUMP0500            BR IF END OF RECORD
+         CLC   0(16,R1),0(R3)      TEST IF CONTINUATION OF DUPLICATE
+         BE    DUMP0400            BR IF SO
+DUMP0500 PUT   OUTDCB,DUP          WRITE THE LINE
+         B     DUMP0100            AND DO IT AGAIN
+DUMP0600 L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS & RETURN TO CALLER
+         SPACE 1
+         DROP  ,
+         CNOP  0,8
+         LTORG ,
+         SPACE 1
+DUP      DC    AL2(DUPL,0)
+         DC    CL4' ',CL6' ',CL2' ',C'ONE OR MORE LINES SAME AS PREVIOU?
+               S LINE'
+DUPL     EQU   *-DUP
+         EJECT
+* Write an error message using IKJEFF02
+*
+*  R0  -- Message code (the code itself, not its address)
+*  R13 -- Standard save area
+*  R14 -- Return address
+*
+* The IKJEFF02 parameter list is initialized before this routine
+* is called, as well as any MTINSRTS values.
+         SPACE 1
+         CNOP  0,8
+         USING *,R12               ESTABLISH ADDRESSABILITY
+         USING WORK,R11
+         SPACE 1
+PUTERRD  SAVE  (14,12),,*          SAVE RETURN CODE
+         LR    R12,R15             COPY EP ADDRESS TO R12
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA
+         ST    R13,4(,R15)          TO THE CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         ST    R0,MTMSGID          SAVE MESSAGE ID
+         MVI   ECB,0               RESET THE ECB
+         L     R15,FF02ADDR        LOAD ADDRESS OF IKJEFF02
+         CALL  (15),MF=(E,MTPARML) CALL IKJEFF02
+         L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS & RETURN TO CALLER
+         SPACE 1
+         CNOP  0,8
+         LTORG ,
+         SPACE 1
+         DROP  ,
+         EJECT
+* Print a message after an allocation error
+*
+*  R13 -- Standard save area
+*  R14 -- Return address
+*  R15 -- DYNALLOC return code
+*
+* The DAIRFAIL parameter list, and its associated data areas, must be
+* filled in.
+* An RB pointer must be present in AWORK.
+         SPACE 1
+         CNOP  0,8
+         USING *,R12               ESTABLISH ADDRESSABILITY
+         USING WORK,R11            ESTABLISH WORK AREA ADDRESSABILITY
+ALLOCERR SAVE  (14,12),,*          SAVE RETURN CODE
+         LR    R12,R15             COPY EP ADDRESS TO R12
+         ST    R0,SAVERC           SAVE RETURN CODE
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA
+         ST    R13,4(,R15)          TO THE CHAIN
+         LR    R13,R15
+         L     R0,AWORK            LOAD ADDRESS OF THE RB
+         N     R0,=A(X'7FFFFFFF')  REMOVE THE HIGH ORDER BIT
+         ST    R0,DFS99RBP         SAVE THE RB ADDRESS
+         LINK  SF=(E,CALLDF),                                          ?
+               MF=(E,DFPARMS)
+         L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS & RETURN TO CALLER
+         SPACE 1
+         DROP  ,                   KILL ALL ADDRESSABILITY
+         SPACE 1
+         CNOP  0,8
+CALLDF   LINK  SF=L,                                                   ?
+               EP=IKJEFF18
+         CNOP  0,8
+         LTORG ,
+         EJECT
+         CNOP  0,8
+* Update a DCB with valid DCB parameters.  This is done very carefully
+* to avoid disturbing existing valid DCB parameters.
+         SPACE 1
+         USING IHADCB,R7
+         USING WORK,R11
+         SPACE 1
+SETODCB  SAVE  (14,12)             SAVE OPEN'S REGISTERS
+         BALR  R12,0               ESTABLISH LOCAL ADDRESS
+         USING *,R12               ESTABLISH ADDRESSABILITY
+         LR    R7,R1               COPY DCB ADDRESS TO R7
+         LR    R11,R1              COPY DCB ADDRESS TO R11
+         LA    R0,OUTDCB-WORK      LOAD OFFSET OF THE DCB
+         SLR   R11,R0              COMPUTE ADDRESS OF THE WORK AREA
+         LA    R15,OS              LOAD ADDR OF THE NEW SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA
+         ST    R13,4(,R15)          TO THE SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH THE NEW SAVE AREA
+         SR    R10,R10             SET R10 = 0
+         IC    R10,DCBRECFM        LOAD ORIGINAL DCBRECFM
+         LH    R9,DCBLRECL         LOAD ORIGINAL DCBLRECL
+         LH    R8,DCBBLKSI         LOAD ORIGINAL DCBBLKSI
+         LR    R0,R10              COPY DCBRECFM TO R0
+         N     R0,=A(DCBRECLA)     LEAVE RECORD TYPE BITS ON
+         BNZ   SO0100              BR IF RECORD TYPE BITS ALREADY SET
+         LA    R0,DCBRECV          SET DCB = RECFM = V
+         OR    R10,R0              ADD TO EXISTING DCBRECFM
+SO0100   LR    R0,R10              COPY DCBRECFM TO R0
+         N     R0,=A(DCBRECLA)     LEAVE RECORD TYPE BITS ON
+         C     R0,=A(DCBRECV)      TEST IF RECORD TYPE = V
+         BNE   SO0400              EXIT IF NOT
+*        LR    R0,R10              COPY RECFM TO R0
+*        N     R0,=A(DCBRECCC)     LEAVE CARRIAGE CONTROL BITS ON
+*        BNZ   SO0400              BR IF CARRIAGE CONTROL BITS SET
+         LTR   R9,R9               TEST LRECL
+         BNZ   SO0200              BR IF IT HAS A VALUE
+         LA    R9,84               SET DEFAULT DCBLRECL
+SO0200   LTR   R8,R8               TEST DCBBLKSI
+         BZ    SO0300              BR IF NOT SET
+         LA    R0,4(,R9)           COMPUTE MINIMUM BLKSIZE
+         CR    R9,R0               COMPARE ACTUAL BLKSIZE W/ MINIMUM
+         BL    SO0400              BR IF ACTUAL < MINIMUM
+SO0300   DC    0H'0'
+         O     R10,=A(DCBRECBR)    ADD B
+         STC   R10,DCBRECFM        UPDATE DCBRECFM
+         STH   R9,DCBLRECL          AND LRECL
+         STH   R8,DCBBLKSI           AND BLKSIZE
+SO0400   L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS & RETURN TO OPEN
+         SPACE 1
+         DROP  R7,R11,R12          KILL ADDRESSABILITY
+         SPACE 1
+         DC    0D'0'
+         LTORG ,
+         EJECT
+* QSORTL comparison exit routine
+         SPACE 1
+         CNOP  0,8
+         USING *,R2
+RIGHT    USING EXTENT,R1
+LEFT     USING EXTENT,R14
+         SPACE 1
+EXCOMP   SAVE  (14,2)              SAVE REGISTERS
+         LR    R2,R15              COPY EP ADDRESS TO R2
+         LA    R15,1               SET R15 = PRELIMINARY RETURN CODE
+         L     R14,0(,R1)          LOAD POINTER TO LEFT EXTENT ENTRY
+         L     R1,4(,R1)           LOAD POINTER TO RIGHT EXTENT ENTRY
+         L     R14,0(,R14)         LOAD ADDR OF LEFT EXTENT ENTRY
+         L     R1,0(,R1)           LOAD ADDR OF RIGHT EXTENT ENTRY
+         LH    R14,LEFT.EXSTART    LOAD LEFT SIDE START OF EXTENT
+         LH    R1,RIGHT.EXSTART    LOAD RIGHT SIDE START OF EXTENT
+         CR    R14,R1              COMPARE
+         BH    EXC0200             BR IF LEFT HIGH
+         BL    EXC0100             BR IF RIGHT HIGH
+         SR    R15,R15             SET RC = 0, EXTENTS START AT SAME   ?
+                                    PLACE
+         B     EXC0200             AND EXIT
+EXC0100  LNR   R15,R15             RESET RC
+EXC0200  RETURN (14,2),RC=(15)     RESTORE REGS AND RETURN TO QSORTL
+         SPACE 1
+         DROP  LEFT,RIGHT,R2       KILL ADDRESSABILITY
+         EJECT
+***********************************************************************
+*                                                                     *
+* Title -- DYNRELOC                                                   *
+*                                                                     *
+* Function / Operation -- DYNRELOC relocates address constant         *
+*   offsets in a dynamic allocation parameter list skeleton.          *
+*                                                                     *
+* Calling sequence --                                                 *
+*            LA    R1,rbptr                                           *
+*            L     R15,=A(DYNRELOC)                                   *
+*            CALL  (15)                                               *
+*            .                                                        *
+*            .                                                        *
+*            .                                                        *
+*   rbptr    DC    A(X'80000000'+rb-rbptr)                            *
+*            SPACE 1                                                  *
+*   rb       DC    AL1(S99RBEND-S99RB,*-*,*-*,0)                      *
+*            DC    2AL2(0)                                            *
+*            DC    A(txtuptrs-rbptr)                                  *
+*            DC    2A(0)                                              *
+*            SPACE 1                                                  *
+*   txtuptrs DC    A(txtu1-rbptr,...)                                 *
+*            DC    A(X'80000000'+txtun-rbptr)                         *
+*            SPACE1                                                   *
+*   txtu1    DC    AL2(...)                                           *
+*            .                                                        *
+*            .                                                        *
+*            .                                                        *
+*   txtun    DC    AL2(...)                                           *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L0 -- October 1991                                              *
+*                                                                     *
+* Attributes -- This routine is reentrant, refreshable and reusable.  *
+*   It operates in problem state and problem key.  It uses no         *
+*   external services.  It operates AMODE=ANY, RMODE=ANY.  This       *
+*   routine is not designed as a stand-alone subroutine.  It is       *
+*   designed to be copied into the source of a program as an          *
+*   independently addressable subroutine.                             *
+*                                                                     *
+* Character Set -- None                                               *
+*                                                                     *
+* Comments -- R1 must point to the RB pointer.  All address constant  *
+*   offsets must represent a positive offset from the RB pointer.     *
+*   DYNRELOC treats an offset of 0 in the text unit pointers as       *
+*   null and does not relocate the offset.  All address constants     *
+*   must be offsets: DYNRELOC does not attempt to detect a mixture    *
+*   of real addresses and offsets.  It is suggested, but not          *
+*   absolutely required, that the parameter list be organized as      *
+*   an RB pointer (which is required), the RB, the text unit          *
+*   pointers, and the text unit data.                                 *
+*                                                                     *
+***********************************************************************
+         SPACE 1
+         PUSH  USING
+         SPACE 1
+         CNOP  0,8
+DYNRELOC SAVE  (14,2),,*           SAVE REGISTERS
+         SPACE 1
+         BALR  R2,0                STORE CURRENT ADDRESS IN R2
+         USING *,R2                ESTABLISH LOCAL ADDRESSABILITY
+         SPACE 1
+         L     R15,0(,R1)          LOAD RB OFFSET
+         ALR   R15,R1              COMPUTE RB ADDRESS
+         ST    R15,0(,R1)          STORE RB ADDRESS
+         SPACE 1
+         USING S99RB,R15           ESTABLISH RB ADDRESSABILITY
+         SPACE 1
+         L     R14,S99TXTPP        LOAD OFFSET OF 1ST TEXT UNIT PTR
+         ALR   R14,R1              COMPUTE ADDRESS
+         ST    R14,S99TXTPP        STORE ADDR OF 1ST TEXT UNIT PTR
+         SPACE 1
+         DROP  R15                 KILL RB ADDRESSABILITY
+         SPACE 1
+DYR0100  L     R15,0(,R14)         LOAD TEXT UNIT OFFSET
+         LR    R0,R15              COPY TEXT UNIT OFFSET TO R0
+         N     R0,=X'7FFFFFFF'     TURN OFF HIGH ORDER BIT
+         BZ    DYR0200             BR IF ALL 0S
+         ALR   R15,R1              COMPUTE TEXT UNIT ADDRESS
+         ST    R15,0(,R14)         STORE TEXT UNIT ADDRESS
+DYR0200  TM    0(R14),X'80'        TEST IF END OF TEXT UNIT POINTERS
+         LA    R14,4(,R14)         COMPUTE NEXT TEXT UNIT POINTER ADDR
+         BZ    DYR0100             BR IF NOT END OF TEXT UNIT POINTERS
+         SPACE 1
+         RETURN (14,2),T           RESTORE REGS AND RETURN TO CALLER
+         CNOP  0,8
+         LTORG ,
+         POP   USING
+*        IEFZB4D0 ,                THIS MACRO MUST BE PROVIDED
+         EJECT
+* ALLOCATE THE INPUT DATA SET
+         SPACE 1
+         CNOP  0,8
+         USING IDUMP,R12           ESTABLISH IDUMP ADDRESSABILITY
+         USING *,R9                ESTABLISH EXIT ADDRESSABILITY
+         USING IDPDL,R10           ESTABLISH PDL ADDRESSABILITY
+         USING WORK,R11            ESTABLISH WORK AREA ADDRESSABILITY
+IN       USING IHADCB,INDCB        DEFINE INPUT DCB ADDRESSABILITY
+         SPACE 1
+ALLOCIN  SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         LR    R9,R15              COPY EP ADDRESS TO R10
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD SAVE AREA TO THE
+         ST    R13,4(,R15)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+ALD0100  L     R1,=A(A1PARM)       LOAD ADDR OF MASTER DYNALLOC PARMS
+         MVC   AWORK(A1PARML),0(R1)  COPY PARM LIST TO AWORK
+         L     R0,IDDSN            LOAD START OF COMMAND LINE DSN
+         LH    R1,IDDSN+4          LOAD LENGTH OF COMMAND LINE DSN
+         LA    R14,A1DSN-A1PARM+AWORK  LOAD LENGTH OF DSN IN PARM LIST
+         LA    R15,L'A1DSN         LOAD LENGTH OF DSN IN PARM LIST
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER
+         MVCL  R14,R0              COPY DSN TO PARM LIST
+         SPACE 1
+         LH    R1,IDDSN+8+4        LOAD LENGTH OF MEMBER NAME
+         LTR   R1,R1               TEST LENGTH
+         BZ    ALD0200             BR IF NO MEMBER NAME
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER
+         L     R0,IDDSN+8+0        LOAD ADDRESS OF MEMBER NAME TEXT
+         LA    R14,IMEMBER         LOAD ADDRESS OF IMEMBER IN WORK AREA
+         LA    R15,L'IMEMBER       LOAD LENGTH
+         MVCL  R14,R0              COPY MEMBER NAME
+         SPACE 1
+* CHECK IF DSN = 'VTOC'
+         SPACE 1
+ALD0200  TM    IDDSN+6,X'40'       TEST IF QUOTED DATA SET
+         BZ    ALD0400             BR IF NOT
+         CLC   =C'VTOC ',A1DSN-A1PARM+AWORK  TEST IF DSN
+         BNE   ALD0400             BR IF NOT
+         SPACE 1
+* TEST IF VOLUME SERIAL PROVIDED
+         SPACE 1
+         TM    IDVOL+6,X'80'       TEST IF VOLUME SERIAL PROVIDED
+         BO    ALD0300             BR IF SO
+         L     R0,=C'MS01'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE ERROR MESSAGE
+         LA    R15,4               SET RC = 4
+         B     AIN9999             EXIT
+         SPACE 1
+ALD0300  OI    SWITCH,VTOC         INDICATE VTOC TO BE ALLOCATED
+         SR    R0,R0               SET R0 = 0
+         STCM  R0,B'0011',(A1DSN-A1PARM+AWORK)-6  INDICATE NO DSN &
+         STCM  R0,B'0011',(A1DSORG-A1PARM+AWORK)-6  NO DSORG RETURN
+         SPACE 1
+* TEST IF VOLUME SERIAL SPECIFIED
+         SPACE 1
+ALD0400  TM    IDVOL+6,X'80'       TEST IF VOLUME SERIAL SPECIFIED
+         BZ    ALD0500             BR IF NOT
+         LA    R14,A1VOL-A1PARM+AWORK  LOAD OUTPUT ADDRESS
+         LA    R15,L'A1VOL         LOAD LENGTH OF OUTPUT
+         L     R0,IDVOL            LOAD ADDRESS OF COMMAND LINE VOL
+         LH    R1,IDVOL+4          LOAD LENGTH OF COMMAND LINE VOL
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER
+         MVCL  R14,R0              COPY VOL SER TO PARM LIST
+         LA    R0,DALUNIT          SET ALLOCATION KEY IN R0
+         STCM  R0,B'0011',A1DEVT-A1PARM+AWORK-6  STORE ALLOCATION KEY
+         LA    R0,DALVLSER         SET ALLOCATION KEY IN R0
+         STCM  R0,B'0011',A1VOL-A1PARM+AWORK-6  STORE ALLOCATION KEY
+         SPACE 1
+* COMPLETE PARM LIST, AND TRY THE ALLOCATION
+         SPACE 1
+ALD0500  LA    R1,AWORK            LOAD ADDRESS OF THE                 ?
+                                    ALLOCATION WORK AREA
+         L     R15,=A(DYNRELOC)    LOAD ADDR OF DYNRELOC
+         CALL  (15)                RELOCATE THE ADDRESS CONSTANTS
+         DYNALLOC ,                ALLOCATE THE DATA SET
+         LTR   R0,R15              TEST RC FROM DYNALLOC
+         BZ    ALD0600             BR IF OK
+         L     R15,=A(ALLOCERR)    LOAD ADDR OF ALLOCERR
+         CALL  (15)                LINK TO COMMON ERROR ROUTINE
+         LA    R15,4               SET RC = 4
+         B     AIN9999             AND EXIT
+         SPACE 1
+* COPY ALLOCATED DDNAME TO DCB
+         SPACE 1
+ALD0600  LA    R14,IN.DCBDDNAM     LOAD ADDRESS OF DDNAME IN DCB
+         LA    R15,L'DCBDDNAM      LOAD LENGTH OF DDNAME
+         LA    R0,A1DDN-A1PARM+AWORK   LOAD START OF ALLOCATED DDNAME
+         SR    R1,R1               SET R1 = 0
+         ICM   R1,B'0011',A1DDN-A1PARM+AWORK-2  LOAD LEN OF DDNAME
+         O     R1,=AL1(C' ',0,0,0) ADD FILL CHARACTER
+         MVCL  R14,R0              COPY DDNAME TO DCB
+         MVC   INDDN,IN.DCBDDNAM   SAVE ALLOCATED DDNAME
+         SPACE 1
+* IF VTOC, READ THE JFCB AND REPLACE THE DSNAME WITH THE PSEUDO
+* DSNAME OF THE VTOC
+         SPACE 1
+         MVC   OPENPARM,OPENMAST   INITIALIZE THE OPEN PARM LIST
+         TM    SWITCH,VTOC         TEST IF VTOC
+         BZ    ALD0800             BR IF NOT
+         L     R0,IN.DCBEXLST      LOAD SOURCE EXIT LIST
+         LA    R1,EXLIST           LOAD ADDRESS OF ACUTUAL EXIT LIST
+         ALR   R0,R1               ADD TOGETHER
+         ST    R0,IN.DCBEXLST      SAVE RESULT EXIT LIST
+         LA    R0,JFCB             LOAD ADDR OF JFCB
+         O     R0,=AL1(X'80'+7,0,0,0)  ADD JFCB POINTER + END OF LIST
+         ST    R0,EXLIST           SAVE
+         RDJFCB (INDCB),MF=(E,OPENPARM)  READ THE JFCB
+         LTR   R15,R15             TEST RC
+         BZ    *+6
+         DC    H'0'
+         MVI   JFCBDSNM,X'04'      REPLACE REAL DSNAME WITH
+         MVC   JFCBDSNM+1(L'JFCBDSNM-1),JFCBDSNM  VTOC DSNAME
+         OPEN  MF=(E,OPENPARM),TYPE=J  ATTEMPT TO OPEN THE VTOC
+         B     ALD0900
+         SPACE 1
+* ACTUALLY OPEN THE DCB
+         SPACE 1
+ALD0800  OPEN  (INDCB),MF=(E,OPENPARM)  OPEN A DATA SET
+ALD0900  SR    R15,R15             SET PRELIMINARY RC
+         TM    IN.DCBOFLGS,DCBOFOPN  TEST IF OPEN OK
+         BO    AIN9999             BR IF SO
+         L     R0,=C'MS02'         LOAD MESSAGE CODE
+         BAL   R14,PUTERR          WRITE THE MESSAGE
+         LA    R15,4               SET RC = 4
+*        B     AIN9999             AND EXIT
+AIN9999  L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T,RC=(15)  RETURN TO IKJPARS
+         SPACE 1
+         DROP  ,                   KILL ALL ADDRESSABILITY
+         CNOP  0,8                 FORCE DOUBLE WORD ALIGNMENT
+         LTORG ,                   DEFINE THE LITERAL POOL FOR ALLOCIN
+         EJECT
+* FORMAT A MEMBER NAME
+         SPACE 1
+         CNOP  0,8
+         USING IDUMP,R12           ESTABLISH IDUMP ADDRESSABILITY
+         USING *,R10               ESTABLISH EXIT ADDRESSABILITY
+         USING WORK,R11            ESTABLISH WORK AREA ADDRESSABILITY
+         USING PDS2,BLDLWORK+4     ESTABLISH PDS MEMBER DATA ADDRESSING
+         SPACE 1
+FMTMEMBR SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         LR    R10,R15             COPY EP ADDRESS TO R10
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD SAVE AREA TO THE
+         ST    R13,4(,R15)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         OC    PDS2TTRP,PDS2TTRP   TEST IF TTR DATA IN ENTRY
+         BZ    FMTM1000            BR IF NOT
+         L     R0,=A(BLANKL)       LOAD ADDR OF A BLANK LINE
+         PUT   OUTDCB,(0)          WRITE A BLANK LINE
+         MVC   OUTLINE+4(L'PDS2NAME),PDS2NAME  COPY MEMBER NAME
+         TR    OUTLINE+4(L'PDS2NAME),TRTAB  ELIMINATE ANY              ?
+                                             NON-PRINTABLE CHARACTERS
+         MVC   OUTLINE+4+L'PDS2NAME(2),=CL8' '  ADD 2 BLANKS
+         UNPK  OUTLINE+4+L'PDS2NAME+2(7),PDS2TTRP(4)  CONVERT 3 BYTES  ?
+                                                  TO PARTIAL HEX DIGITS
+         UNPK  OUTLINE+4+L'PDS2NAME+2+6(3),PDS2INDC(2)  CONVERT 1 BYTE ?
+                                                  TO PARTIAL HEX DIGITS
+         TR    OUTLINE+4+L'PDS2NAME+2(8),HEXTAB  COMPLETE CONVERSION
+         LA    R0,4+L'PDS2NAME+2+8  LOAD LENGTH WITHOUT USER DATA
+         STH   R0,OUTLINE          SAVE -- LINE IS READY TO PRINT
+         IC    R1,PDS2INDC         LOAD INDC
+         N     R1,=A(PDS2LUSR)     TURN OFF NON-LENGTH BITS
+         BZ    FMTM0900            GO PRINT WHAT WE HAVE
+         AR    R1,R1               DOUBLE THE LENGTH
+         LA    R6,PDS2USRD(R1)     COMPUTE END OF USER DATA
+         LA    R4,4                SET R4 = 4
+         LA    R3,FMTMREG          LOAD START OF TABLE
+         LA    R5,FMTMREGE         LOAD END OF TABLE
+         C     R1,=A(SPFLEN)       TEST IF POSSIBLE SPF ENTRY
+         BNE   FMTM0100            BR IF NOT
+         IC    R0,PDS2INDC         LOAD PDS2INDC
+         N     R0,=A(PDS2NTTR)     LOAD NUMBER OF TTRS
+         BNZ   FMTM0100            BR IF LOAD MODULE ENTRY
+         LA    R3,FMTMSPF          LOAD START OF SPF TABLE
+         LA    R5,FMTMSPFE         LOAD END OF SPF TABLE
+FMTM0100 MVI   OUTLINE+4+L'PDS2NAME+2+8,C' '  ADD A BLANK
+         LA    R2,PDS2USRD         LOAD START OF USER DATA
+FMTM0200 LA    R15,OUTLINE+4+L'PDS2NAME+2+8+1  LOAD START OF OUTPUT
+         LA    R1,OUTLINE+4+80-1                 LOAD END OF OUTPUT
+FMTM0300 LH    R7,2(,R3)           LOAD FIELD LENGTH
+         AR    R7,R2               COMPUTE TRIAL END OF FIELD
+         CR    R7,R6               COMPARE TRIAL END OF FIELD W/ END   ?
+                                    OF DATA IN THE DIRECTORY ENTRY
+         BNH   FMTM0400            BR IF ENTIRE FIELD IS IN THE        ?
+                                    DIRECTORY ENTRY
+         LR    R7,R6               COPY REAL END OF DATA TO R7
+FMTM0400 SR    R7,R2               COMPUTE EFFECTIVE FIELD LENGTH
+         LA    R14,1(R7,R7)        DOUBLE FIELD LENGTH & ADD 1
+         AR    R14,R15             COMPUTE TRIAL END OF OUTPUT
+         CR    R14,R1              TEST IF FIELD WILL FIT ON LINE
+         BNH   FMTM0500            BR IF TRIAL OUTPUT FITS ON LINE
+         LA    R1,OUTLINE          LOAD START OF OUTPUT
+         SR    R15,R1              COMPUTE LENGTH
+         STH   R15,0(,R1)          STORE LENGTH IN THE RDW
+         PUT   OUTDCB,OUTLINE      WRITE THE LINE
+         MVI   OUTLINE+4,C' '      CLEAR THE FIRST PART
+         MVC   OUTLINE+5(30),OUTLINE+4
+         B     FMTM0200            AND CONTINUE
+FMTM0500 MVI   0(R15),C' '         ADD A BLANK
+FMTM0600 C     R7,=F'8'            COMPARE LENGTH W/ 8
+         BL    FMTM0700            BR IF LENGTH < 8
+         LA    R0,7                SET R0 = 7
+         UNPK  1(15,R15),0(8,R2)   CONVERT 7 BYTES TO HEX DIGITS
+         TR    1(15,R15),HEXTAB
+         LA    R15,14(,R15)        COMPUTE NEXT OUTPUT POSITION
+         AR    R2,R0               COMPUTE NEXT INPUT POSITION
+         SR    R7,R0               COMPUTE REMAINING LENGTH
+         B     FMTM0600            AND CONTINUE ON
+FMTM0700 LR    R14,R7              COPY FIELD LENGTH TO R14
+         SLL   R14,4+1             MOVE FIELD LENGTH 5 BYTES TO LEFT
+         OR    R14,R7              ADD ORIGINAL FIELD LENGTH
+         EX    R14,FMTMUNPK        CONVERT FIELD LENGTH OF SOURCE DATA
+         SRL   R14,4
+         EX    R14,FMTMTR           TO HEXADECIMAL DIGITS
+         LA    R15,1(R14,R15)      COMPUTE ADDR OF NEXT OUTPUT ELEMENT
+         AR    R2,R7               COMPUTE ADDR OF NEXT INPUT ELEMENT
+         CR    R2,R6               COMPARE WITH END OF USER DATA
+         BNL   FMTM0800            BR IF NEXT "FIELD" FOLLOWS THE      ?
+                                    DIRECTORY ENTRY
+         BXLE  R3,R4,FMTM0300      GO FORMAT THE NEXT FIELD
+FMTM0800 LA    R1,OUTLINE          LOAD ADDR OF THE OUTPUT LINE
+         SR    R15,R1              COMPUTE LENGTH OF OUTPUT LINE
+         STH   R15,0(,R1)          STORE RECORD LENGTH IN THE RDW
+FMTM0900 PUT   OUTDCB,OUTLINE      WRITE THE LINE
+FMTM1000 L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS AND RETURN TO CALLER
+FMTMUNPK UNPK  1(*-*,R15),0(*-*,R2)
+FMTMTR   TR    1(*-*,R15),HEXTAB
+* THE INITIAL OFFSET IN THE FOLLOWING TABLES ARE NOT USED.  WE ASSUME
+* WE ARE CONVERTING A CONTINUOUS STRING OF VARIABLE LENGTH FIELDS.
+* IN THE EVENT WE CHANGE OUR MIND, THE DATA IS THERE
+FMTMREG  DC    AL2(00,5)
+         DC    AL2(05,5)
+         DC    AL2(10,5)
+         DC    AL2(15,5)
+         DC    AL2(20,5)
+         DC    AL2(25,5)
+         DC    AL2(30,5)
+         DC    AL2(35,5)
+         DC    AL2(40,5)
+         DC    AL2(45,5)
+         DC    AL2(50,5)
+         DC    AL2(55,5)
+FMTMREGE DC    AL2(60,5)
+         SPACE 1
+FMTMSPF  DC    AL2(SPFVER-PDS2USRD,L'SPFVER)
+         DC    AL2(SPFMOD-PDS2USRD,L'SPFMOD)
+         DC    AL2(SPFRSV1-PDS2USRD,L'SPFRSV1)
+         DC    AL2(SPFCREAT-PDS2USRD,L'SPFCREAT)
+         DC    AL2(SPFMODD-PDS2USRD,L'SPFMODD)
+         DC    AL2(SPFMODT-PDS2USRD,2*L'SPFMODT)
+         DC    AL2(SPFSIZE-PDS2USRD,L'SPFSIZE)
+         DC    AL2(SPFINIT-PDS2USRD,L'SPFINIT)
+         DC    AL2(SPFMODR-PDS2USRD,L'SPFMODR)
+         DC    AL2(SPFUSER-PDS2USRD,L'SPFUSER)
+FMTMSPFE DC    AL2(SPFRSV2-PDS2USRD,L'SPFRSV2)
+         SPACE 1
+         DC    0D'0'
+TRTAB    MAKETR 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%¢*()_+=-¬|":;<?
+               >?/abcdefghijklmnopqrstuvwxyz
+         SPACE 1
+         LTORG ,
+         SPACE 1
+         DROP  ,
+         EJECT
+         CNOP  0,8
+         USING *,R12               ESTABLISH ADDRESSABILITY
+TESTHEXC SAVE  (14,12),,*          SAVE REGISTERS
+         LR    R12,R15             COPY EP ADDRESS TO R12
+         LA    R4,2                SET R4 = 2
+         L     R3,0(,R1)           LOAD ADDRESS OF FIRST ELEMENT       ?
+                                    IN THE PDE
+TH0100   LH    R5,4(,R3)           LOAD LENGTH OF DATA
+         LTR   R5,R5               TEST IF 0
+         BZ    TH0200              IGNORE IF SO
+         BCTR  R5,0                REDUCE LENGTH BY 1 FOR HARDWARE
+         L     R4,0(,R3)           LOAD TEXT ADDRESS
+         EX    R5,THTRT            TEST IF ALL DIGITS ARE HEX
+         BNZ   TH0300              BR IF NOT
+         LA    R3,8(,R3)           COMPUTE ADDR OF SECOND PDE ELEMENT
+         BCT   R4,TH0100           CONTINUE SCAN
+TH0200   SR    R15,R15             SET RC = 0
+         B     TH0400              AND EXIT
+TH0300   LA    R15,4               SET RC = 4
+TH0400   RETURN (14,12),T,RC=(15)  RESTORE CALLER'S REGS AND SET RC
+         SPACE 1
+THTRT    TRT   0(*-*,R4),THHTAT    TEST IF ALL DIGITS ARE HEXADECIMAL
+         SPACE 1
+         DROP  R12                 KILL ADDRESSABILITY
+         SPACE 1
+         DC    0D'0'               FOURCE DOUBLE WORD ALIGNMENT
+THHTAT   DC    0XL256'0',256AL1(4) TRANSLATE AND TEST TABLE
+         ORG   THHTAT+C'A'         RESET ORGIN
+         DC    AL1(0,0,0,0,0,0)    C'A' THROUGH C'F' ARE VALID
+         ORG   THHTAT+C'0'         RESET ORIGIN
+         DC    10AL1(0)            C'0' THOUGH C'9' ARE VALID
+         ORG   ,                   RESET ORIGIN
+         LTORG ,
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+IDPCL    IKJPARM DSECT=IDPDL
+IDDSN    IKJPOSIT DSNAME,                                              ?
+               USID,                                                   ?
+               PROMPT='DATA SET NAME TO PROCESS'
+IDOUTX   IKJKEYWD DEFAULT='PRINT(IDUMP.OUTPUT)'
+         IKJNAME PRINT,SUBFLD=IDSUB01
+         IKJNAME LIST,SUBFLD=IDSUB01
+         IKJNAME OUTPUT,SUBFLD=IDSUB01
+IDTTX    IKJKEYWD
+         IKJNAME TT,SUBFLD=IDSUB02
+*IDTTY    IKJKEYWD                                                 V1L3
+*         IKJNAME TRUETT,SUBFLD=IDSUB05                            V1L3
+IDCCHX   IKJKEYWD
+         IKJNAME CCHH,SUBFLD=IDSUB03
+IDVOLX   IKJKEYWD
+         IKJNAME VOL,SUBFLD=IDSUB04
+IDXTEND  IKJKEYWD
+         IKJNAME MOD
+         IKJNAME EXTEND
+IDHA     IKJKEYWD
+         IKJNAME HA
+         IKJNAME NOHA
+IDR0     IKJKEYWD
+         IKJNAME R0
+         IKJNAME NOR0
+IDKEY    IKJKEYWD
+         IKJNAME COMBINEKEY
+         IKJNAME NOCOMBINEKEY
+IDSUB01  IKJSUBF
+IDOUT    IKJPOSIT DSNAME,                                              ?
+               USID,                                                   ?
+               PROMPT='DUMP IMAGE OUTPUT'
+IDSUB02  IKJSUBF
+IDTT     IKJIDENT 'RELATIVE TRACK',                                    >
+               LIST,                                                   ?
+               RANGE,                                                  ?
+               FIRST=ALPHANUM,                                         ?
+               OTHER=ALPHANUM,                                         ?
+               MAXLNTH=6,                                          V1L3>
+               PROMPT='RELATIVE TRACK RANGE TO PROCESS',               >
+               HELP='IN HEX',                                          ?
+               VALIDCK=TESTHEXC
+IDSUB03  IKJSUBF
+IDCCHH   IKJIDENT 'CCHH',                                              >
+               LIST,                                                   ?
+               RANGE,                                                  ?
+               FIRST=ALPHANUM,                                         ?
+               OTHER=ALPHANUM,                                         ?
+               MAXLNTH=8,                                              ?
+               PROMPT='CCHH RANGE TO PROCESS',                         ?
+               HELP='IN HEX',                                          ?
+               VALIDCK=TESTHEXC
+IDSUB04  IKJSUBF
+IDVOL    IKJIDENT 'VOLUME',                                            ?
+               FIRST=ALPHANUM,                                         ?
+               OTHER=ALPHANUM,                                         ?
+               MAXLNTH=6,                                              ?
+               PROMPT='VOLUME SERIAL'
+*IDSUB05  IKJSUBF                                                  V1L3
+*IDTRUETT IKJIDENT 'TRUE TRACK',                                   V1L3>
+               LIST,                                                   >
+               RANGE,                                                  >
+               FIRST=ALPHANUM,                                         >
+               OTHER=ALPHANUM,                                         >
+               MAXLNTH=6,                                          V1L3>
+               PROMPT='TRUE TRACK RANGE TO PROCESS',                   >
+               HELP='IN HEX',                                          >
+               VALIDCK=TESTHEXC
+         IKJENDP
+         POP   PRINT
+         EJECT
+         CNOP  0,8
+CNVTDATE SAVE  (14,12),,*          SAVE REGISTERS
+         BALR  R12,0               STORE CURRENT ADDRESS IN R12
+         USING *,R12               ESTABLISH LOCAL BASE REGISTER
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO CALLER'S
+         ST    R15,8(,R13)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         USING CDWORK,R13          USE SAVE AREA AS THE WORK AREA
+         USING CDOUT,R2            ESTABLISH LOOK OF OUTPUT AREA
+         LR    R2,R1               COPY OUTPUT AREA POINTER TO R2
+         MVC   0(L'CNMASK,R2),CNMASK  PRESET THE OUTPUT AREA
+         TIME  DEC                 GET DATE AND TIME
+         STM   R0,R1,CDTMDT        SAVE DATE AND TIME
+         ED    CDOTIME,CDTMDT      CONVERT HH:MM IN TIME TO DECIMAL
+         ZAP   CDDWORK,CDTMDT+4    COPY JULIAN DATE TO DWORK
+         CVB   R15,CDDWORK         CONVERT JULIAN DATE TO BINARY
+         SR    R14,R14             SET R14 = 0
+         D     R14,=F'1000'        DIVIDE BINARY JULIAN DATE BY 1000
+         CVD   R15,CDDWORK         R15 CONTAINS THE YEAR - CONVERT
+         OI    CDDWORK+7,X'0F'      TO DECIMAL
+         UNPK  CDOYR,CDDWORK
+         LR    R3,R14              COPY DAY OF YEAR TO R3
+         SR    R14,R14             SET R14 = 0
+         D     R14,=F'4'           DIVIDE YEAR BY 4
+         LTR   R14,R14             TEST REMAINDER
+         BZ    CNT0100             BR IF LEAP YEAR
+         C     R3,=A(31+28)        COMPARE DAY OF YEAR WITH NUMBER OF  ?
+                                    DAYS IN JANUARY AND FEBRUARY
+         BNH   CNT0100             BR IF JANUARY OR FEBRUARY
+         LA    R3,1(,R3)           UPDATE DATE AS THOUGH THIS IS A     ?
+                                    LEAP YEAR
+CNT0100  SR    R15,R15             SET R15 = 0
+         IC    R15,CNTMNTH(R3)     LOAD MONTH FOR THIS DAY OF YEAR
+         CVD   R15,CDDWORK         CONVERT MONTH TO DECIMAL
+         OI    CDDWORK+7,X'0F'
+         UNPK  CDOMON,CDDWORK
+         SLL   R15,1               MULTIPLY MONTH BY 2
+         SH    R3,CNTDAY(R15)      SUBTRACT DAYS IN YEAR AT THE START  ?
+                                    OF THE MONTH FROM DAYS IN YEAR.    ?
+                                    THIS REVEALS DAY IN MONTH
+         CVD   R3,CDDWORK          CONVERT DAY IN MONTH TO DECIMAL
+         OI    CDDWORK+7,X'0F'
+         UNPK  CDODAY,CDDWORK
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN (14,12),T          RETURN TO CALLER
+         SPACE 1
+         DROP  R2,R12,R13          KILL ADDRESSABILITY
+         SPACE 1
+CNTMNTH  EQU   *-1
+         DC    31AL1(1),29AL1(2),31AL1(3)
+         DC    30AL1(4),31AL1(5),30AL1(6)
+         DC    31AL1(7),31AL1(8),30AL1(9)
+         DC    31AL1(10),30AL1(11),31AL1(12)
+         SPACE 1
+         DC    0H'0'
+CNTDAY   EQU   *-2
+         DC    AL2(0)
+         DC    AL2(31)
+         DC    AL2(31+29)
+         DC    AL2(31+29+31)
+         DC    AL2(31+29+31+30)
+         DC    AL2(31+29+31+30+31)
+         DC    AL2(31+29+31+30+31+30)
+         DC    AL2(31+29+31+30+31+30+31)
+         DC    AL2(31+29+31+30+31+30+31+31)
+         DC    AL2(31+29+31+30+31+30+31+31+30)
+         DC    AL2(31+29+31+30+31+30+31+31+30+31)
+         DC    AL2(31+29+31+30+31+30+31+31+30+31+30)
+CNMASK   DC   0C'  /  /   HH:MM',C'  /  /   ',X'2120',C':',X'2020'
+         DC    0D'0'
+         LTORG ,
+CDWORK   DSECT
+         DS    3A
+CDTMDT   DS    2A
+CDDWORK  DS    D
+CDOUT    DSECT
+CDOMON   DS    CL2,C'/'
+CDODAY   DS    CL2,C'/'
+CDOYR    DS    CL2
+CDOTIME  DS    C' HH:MM'
+CDOUTL   EQU   *-CDOUT
+         EJECT
+IDUMPMSG CSECT
+         IKJTSMSG ('IDMP001I IDUMP COMPLETED, OUTPUT IN ',),MS00
+         IKJTSMSG ('IDMP002E VTOC SPECIFIED IN DATA SET NAME, BUT VOL P?
+               ARAMETER NOT SPECIFIED'),MS01
+         IKJTSMSG ('IDMP003E OPEN FAILED FOR INPUT DATA SET'),MS02
+         IKJTSMSG ('IDMP004E ACTUAL DSORG OF ALLOCATED OUTPUT DATA SET ?
+               DOES NOT AGREE WITH DSORG IMPLIED BY COMMAND INPUT'),MS0?
+               3
+         IKJTSMSG ('IDMP005E OPEN FAILED FOR OUTPUT DATA SET'),MS04
+         IKJTSMSG ('IDMP006E ACTUAL RECFM OF OUTPUT DATA SET IS NOT SUP?
+               PORTED BY IDUMP'),MS05
+         IKJTSMSG ('IDMP007E ACTUAL LRECL OF OUTPUT DATA SET IS TOO SMA?
+               LL FOR IDUMP'),MS06
+         IKJTSMSG ('IDMP008E ',,' ',,' IS NOT COMPLETELY IN INPUT DATA >
+               SET'),MS07
+         IKJTSMSG ('IDMP009E INPUT DATA SET HAS NO EXTENTS'),MS08
+         IKJTSMSG ('IDMP010E EXTEND OPTION NOT SUPPORTED WHEN OUTPUT DA?
+               TA SET IS PARTITIONED'),MS09
+         IKJTSMSG ,
+         SPACE 1
+         PUSH  PRINT
+         PRINT OFF
+         EJECT
+* VALUES FOR DALSTAT
+         SPACE 1
+DISPSHR  EQU   X'08'
+DISPNEW  EQU   X'04'
+DISPMOD  EQU   X'02'
+DISPOLD  EQU   X'01'
+         SPACE 5
+* VALUES FOR DALNDISP AND DALCDISP
+         SPACE 1
+DISPKEEP EQU   X'08'
+DISPDEL  EQU   X'04'
+DISPCAT  EQU   X'02'
+DISPUCAT EQU   X'01'
+         SPACE 5
+* VALUES FOR DALSPFRM
+         SPACE 1
+SPCONTIG EQU   X'08'
+SPMXIG   EQU   X'04'
+SPALX    EQU   X'02'
+         SPACE 5
+* VALUES FOR DALLABEL
+         SPACE 1
+LBLAUL   EQU   X'48'
+LBLAL    EQU   X'40'
+LBLLTM   EQU   X'21'
+LBLBLP   EQU   X'10'
+LBLSUL   EQU   X'0A'
+LBLNSL   EQU   X'04'
+LBLSL    EQU   X'02'
+LBLNL    EQU   X'01'
+         SPACE 5
+* VALUES FOR DALPASPR
+         SPACE 1
+PASSCNTL EQU   X'10'               PASSWORD ALWAYS REQUIRED
+PASSREAD EQU   X'40'               PASSWORD NOT REQUIRED FOR READ
+         SPACE 5
+* VALUES FOR DALINOUT
+         SPACE 1
+INOUTIN  EQU   X'80'               LABEL=(..,IN)
+INOUTOUT EQU   X'40'               LABEL=(...,OUT)
+         SPACE 5
+* VALUES FOR DALFCBAV
+         SPACE 1
+FCBALIGN EQU   X'08'               ALIGN FCB
+FCBVER   EQU   X'04'               VERIFY FCB
+         SPACE 5
+* VALUES FOR DALBURST
+         SPACE 1
+BURSTCFS EQU   X'04'               SEND TO CFS (CONTINUOUS FORMS STKR)
+BURSTBTS EQU   X'02'               SEND TO BTS (BURSTER/TRIMMER STKR)
+         SPACE 5
+* PARAMETER LENGTH NOTES --
+         SPACE 1
+* DALBLKLN -- 3
+* DALPRIME -- 3
+* DALSECND -- 3
+* DALDIR   -- 3
+* DALVLSEQ -- 2
+* DALVLCNT -- 1
+* DALUNCNT -- 1
+* DALOUTLIM-- 3
+* DALCOPYS -- 1
+* DALDSSEQ -- 2
+* DALEXPDT -- 5  (C'YYDDD')
+* DALRETPD -- 2
+* DALFCNT  -- 1
+* DALFCNT  -- 1
+* DALSSATT -- 1
+         POP   PRINT
+         SPACE 1
+         END   IDUMP
+QSORTS   TITLE '                        Q S O R T   A N D   Q S O R T L>
+                  F U N C T I O N S'
+***********************************************************************
+*                                                                     *
+* TITLE -- QSORT                                                      *
+*                                                                     *
+* FUNCTION / OPERATION -- THIS MODULE OPERATES AS A SHELL BETWEEN A   *
+*   CALLING PROGRAM AND A COMPARE PROGRAM.  THE EFFECT OF THE SHELL   *
+*   IS TO SORT DATA IN ASCENDING ORDER, DEPENDING ON THE RESULTS      *
+*   RETURNED BY THE COMPARE PROGRAM                                   *
+*                                                                     *
+* STATUS / CHANGE LEVEL --                                            *
+*   V1L2 -- SEP 2017                                                  *
+*    - BC INSTRUCTIONS ALTERED TO BRC INSTRUCTIONS.                   *
+*    - QSORTS CSECT DEFINED AS READ ONLY.                             *
+*    - MINOR PERFORMANCE TWEAKING DONE.                               *
+*    - VERSION MARKERS UPDATED.                                       *
+*    - PAGE HEADER ALTERED TO REMOVE REFERENCE TO QUICKSORT.          *
+*   V1L1 -- OCT 14, 1997                                              *
+*     UPDATE QSORT TO DO NO PROCESSING IF N <= 1                      *
+*   V1L0 -- FEB 28, 1993                                              *
+*                                                                     *
+* CALLING SEQUENCE --                                                 *
+*                                                                     *
+*          CALL QSORT,(BASE,N,WIDTH,COMPARE,WORK)                     *
+*                                                                     *
+*    BASE    -- THE FIRST ELEMENT IN AN ARRAY OF ELEMENTS TO SORT     *
+*    COMPARE -- THE ADDRESS OF A ROUTINE USED TO COMPARE TWO ELEMENTS *
+*               OF THE DATA AREA                                      *
+*    N       -- A FULL WORD CONTAINING THE NUMBER OF ELEMENTS TO SORT *
+*    WIDTH   -- A FULL WORD CONTAINING THE NUMBER OF BYTES IN EACH    *
+*               ELEMENT.  THE MAXIMUM VALUE IS 256.                   *
+*    WORK    -- A 100 BYTE DATA AREA USED AS A WORK AREA              *
+*                                                                     *
+*    COMPARE ROUTINE --                                               *
+*      THE COMPARE ROUTINE IS CALLED WITH THIS CALLING SEQUENCE --    *
+*                                                                     *
+*               CALL COMPARE,(ELEMENT1,ELEMENT2)                      *
+*                                                                     *
+*      THE RETURN CODE IN REGISTER 15 EXPECTED FROM COMPARE IS --     *
+*                                                                     *
+*        ELEMENT1 < ELEMENT2 -- LESS THAN 0                           *
+*        ELEMENT1 = ELEMENT2 -- 0                                     *
+*        ELEMENT1 > ELEMENT2 -- GREATER THAN 0                        *
+*                                                                     *
+* ATTRIBUTES -- QSORT IS REENTRANT, REFRESHABLE AND RESUABLE.  IT     *
+*   USES NO EXTERNAL SYSTEM RESOURCES.  IT OPERATES AMODE ANY,        *
+*   RMODE ANY.  IT DOES NOT SUPPORT OPERATION IN AR MODE              *
+*                                                                     *
+***********************************************************************
+         EJECT
+         MACRO
+         SETR
+         LCLA  &A
+.L       AIF   (&A GT 15).X
+R&A      EQU   &A
+&A       SETA  &A+1
+         AGO   .L
+.X       MEND
+*        CALL  QSORT( BASE, NUM, WIDTH, COMPARE, WORK )
+*
+* THIS ROUTINE IS BASED ON THE FOLLOWING C PROGRAM
+*
+* VOID SORT( CHAR *ARRAY, INT N )
+*  {
+*   INT GAP, I, J, TEMP;
+*
+*   FOR ( GAP = N / 2; GAP > 0; GAP /= 2 )
+*    FOR ( I = GAP; I < N; I++ )
+*     FOR ( J = I - GAP;
+*           J >= 0 && ARRAY(J) > ARRAY(J + GAP);
+*           J -= GAP )
+*      {
+*       TEMP = ARRAY(J);
+*       ARRAY(J) = ARRAY( J + GAP );
+*       ARRAY( J + GAP ) = TEMP;
+*      }
+*  }
+         SPACE 1
+QSORTS   RSECT                     DEFINE PROGRAM CSECT            V1L2
+         SPACE 1
+QSORTS   AMODE ANY                 DEFINE AMODE
+QSORTS   RMODE ANY                 DEFINE RMODE
+         SPACE 1
+         ENTRY QSORT,QSORTL
+         SPACE 1
+         SYSSTATE ARCHLVL=2                                        V1L2
+         SR    R15,R15             SET R15 = 0
+         BR    R14                 RETURN IF QSORTS CALLED
+         SPACE 1
+      DC    C'QSORT AND QSORTL ROUTINES -- V1L2 &SYSDATE &SYSTIME' V1L2
+         DC    0D'0'
+         SPACE 1
+N        EQU   R3                  N
+WIDTH    EQU   R4                  WIDTH
+GAP      EQU   R6                  GAP
+I        EQU   R7                  I
+J        EQU   R8                  J
+         SPACE 1
+         USING *,R12               ESTABLISH ADDRESSABILITY
+QSORT    SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         LR    R12,R15             COPY EP ADDRESS TO R12
+         LM    R2,R6,0(R1)         LOAD THE REGISTERS
+         ST    R6,8(,R13)          ADD THE NEW SAVE AREA TO THE
+         ST    R13,4(,R6)           CALLER'S SAVE AREA CHAIN
+         LR    R13,R6              ESTABLISH THE NEW SAVE AREA
+         L     R3,0(,R3)           LOAD VALUE OF NUM
+         CHI   R3,1                COMPARE VALUE W/ 1              V1L2
+         JNH   QSO0600             BR IF 0 OR 1                    V1L2
+         L     R4,0(,R4)           LOAD VALUE OF WIDTH
+*   FOR ( GAP = N / 2; GAP > 0; GAP /= 2 )
+         LR    GAP,N               COPY N TO GAP
+         CNOP  0,8
+QSO0100  SRA   GAP,1               DIVIDE N BY 2
+*        LTR   GAP,GAP             TEST IF DONE (SRA SETS THE CC)  V1L2
+         JZ    QSO0600             BR IF SO                        V1L2
+*    FOR ( I = GAP; I < N; I++ )
+         LR    I,GAP               COPY GAP TO I
+QSO0200  CR    I,N                 COMPARE I AND N
+         JNL   QSO0100             BR IF NOT A MATCH               V1L2
+*     FOR ( J = I - GAP;
+*           J >= 0 && ARRAY(J) > ARRAY(J + GAP);
+*           J -= GAP )
+         LR    J,I                 COPY I TO J
+         SR    J,GAP               SUBTRACT GAP FROM I
+QSO0300  LTR   J,J                 COMPARE J AND 0
+         JL    QSO0500             BR IF DONE                      V1L2
+         LR    R15,J               COPY J TO R15
+         MR    R14,WIDTH           COMPUTE TRUE OFFSET
+         LA    R9,0(R15,R2)        COMPUTE ADDRESS
+         LR    R15,J               COPY J TO R15
+         AR    R15,GAP             ADD GAP
+         MR    R14,WIDTH           COMPUTE TRUE OFFSET
+         LA    R10,0(R15,R2)       COMPUTE ADDRESS
+         LR    R15,R5              COPY COMPARE ROUTINE ADDRESS TO R15
+         CALL  (15),((R9),(R10)),MF=(E,72(,R13)) CALL THE COMPARE PGM
+         LTR   R15,R15             TEST RC FROM COMPARE
+         JNH   QSO0500             BR IF DONE                      V1L2
+         LR    R1,WIDTH            COPY WIDTH TO R1
+         BCTR  R1,0                REDUCE BY 1
+         EX    R1,SWITCH1          EXCHANGE THE TWO ELEMENTS
+         EX    R1,SWITCH2
+         EX    R1,SWITCH1
+QSO0400  SR    J,GAP               SUBTRACT GAP FROM J
+         J     QSO0300             TEST IF FOR IS DONE             V1L2
+         SPACE 1
+QSO0500  LA    I,1(,I)             ADD 1 TO I
+         J     QSO0200             TEST IF FOR IS DONE             V1L2
+         SPACE 1
+QSO0600  L     R13,4(,R13)         RESTORE ADDR OF CALLER'S SAVE AREA
+         RETURN (14,12),T          RETURN TO CALLER
+         SPACE 1
+         CNOP  0,8
+SWITCH1  XC    0(*-*,R9),0(R10)
+SWITCH2  XC    0(*-*,R10),0(R9)
+         SPACE 1
+         CNOP  0,8
+         LTORG ,
+         EJECT
+***********************************************************************
+*                                                                     *
+* TITLE -- QSORTL                                                     *
+*                                                                     *
+* FUNCTION / OPERATION -- QSORTL ACTS AS AN INTERFACE BETWEEN ANOTHER *
+*   PROGRAM AND THE QSORT PROGRAM.  QSORTL SORTS A LIST OF ELEMENTS   *
+*   THAT ARE ON A CHAIN.  IT DOES THIS BY RUNNING THE CHAIN TO        *
+*   PRODUCE A POINTER LIST, THEN USES QSORT TO SORT THE POINTER LIST. *
+*   AFTER QSORT TERMINATES THE CHAIN IS REBUILT IN SORTED ORDER BY    *
+*   UPDATING THE POINTER ELEMENTS.                                    *
+*                                                                     *
+*                                                                     *
+* STATUS / CHANGE LEVEL --                                            *
+*   V1L1 -- APR 2016                                                  *
+*    - ALLOCATE THE WORK AREA ABOVE THE LINE IF RUNNING AMODE 31      *
+*   V1L0 -- MAR 31, 1993                                              *
+*                                                                     *
+* CALLING SEQUENCE --                                                 *
+*   CALL QSORTL,(BASE,OFFSET,COMPARE)                                 *
+*                                                                     *
+*     BASE    -- ADDRESS OF A POINTER TO THE FIRST ELEMENT OF THE     *
+*                CHAIN                                                *
+*     OFFSET  -- OFFSET OF THE 4 BYTE POINTER TO THE NEXT ELEMENT     *
+*                IN THE CHAIN.  A POINTER VALUE OF 0 INDICATES THE    *
+*                LAST ELEMENT IN THE CHAIN.                           *
+*     COMPARE -- COMPARE ROUTINE, AS USED BY QSORT.  THE COMPARE      *
+*                ROUTINE SEES POINTERS TO THE DATA ELEMENT TO SORT.   *
+*                                                                     *
+* ATTRIBUTES -- QSORTL IS REENTRANT, REFRESHABLE AND REUSABLE.  IT    *
+*   USES THE GETMAIN AND FREEMAIN SERVICE ROUTINE TO ALLOCATE AND     *
+*   RELEASE STORAGE IN SUBPOOL 0.  IT OPERATES AMODE ANY, RMODE ANY.  *
+*   AR MODE OPERATION IS NOT SUPPORT.                                 *
+*                                                                     *
+***********************************************************************
+         CNOP  0,8
+         SPACE 1
+         USING *,R12               ESTABLISH PROGRAM ADDRESSABILITY
+         USING QLWORK,R13          ESTABLISH WORK AREA ADDRESSABILITY
+         SPACE 1
+QSORTL   SAVE  (14,12),,*          SAVE REGISTERS
+         LR    R12,R15             COPY EP ADDRESS TO R12
+         LM    R2,R4,0(R1)         LOAD PARM LIST
+         L     R3,0(,R3)           LOAD VALUE OF OFFSET
+         SPACE 1
+* COUNT THE NUMBER OF ELEMENTS ON THE CHAIN
+         SPACE 1
+         SR    R7,R7               SET COUNT = 0
+         L     R6,0(,R2)           LOAD ADDRESS OF THE FIRST ELEMENT
+QL0100   LTR   R6,R6               TEST IF END OF CHAIN
+         JZ    QL0200              BR IF END                       V1L2
+         L     R6,0(R3,R6)         LOAD ADDRESS OF THE NEXT ELEMENT
+         LA    R7,1(,R7)           ADD 1 TO COUNT
+         J     QL0100              AND CONTINUE                    V1L2
+         SPACE 1
+* MAKE SURE THE CHAIN IS WORTH SORTING
+         SPACE 1
+QL0200   C     R7,=F'1'            COMPARE COUNT WITH 1
+         JNH   QL0800              EXIT IF COUNT <= 1              V1L2
+         SPACE 1
+* CALCULATE THE SIZE OF THE WORK AREA WE WILL ALLOCATE.  THE WORK
+* AREA CONTAINS A FIXED BASE AREA FOLLOWED BY POINTER LIST WE PASS TO
+* QSORT.
+         SPACE 1
+         LR    R6,R7               COPY COUNT TO R6
+         SLL   R6,2                MULTIPLY COUNT BY 4
+         LA    R6,QLWORKL+7(,R6)   COMPUTE TOTAL SIZE TO ALLOCATE
+         SPACE 1
+* ALLOCATE THE WORK AREA
+         SPACE 1
+         N     R6,=F'-8'           ROUND DOWN TO A DOUBLE WORD
+         TAM   ,                   TEST THE ADDRESSING MODE
+         JZ    QL0300              BR IF AMODE 24                  V1L2
+         GETMAIN RU,LV=(R6),LOC=(31,ANY)  ALLOCATE THE WORK AREA
+         J     QL0400                                              V1L2
+QL0300   GETMAIN RU,LV=(R6),LOC=(24,ANY)  ALLOCATE THE WORK AREA
+         SPACE 1
+* ADD THE CHAIN AREA IN THE WORK AREA TO THE SAVE AREA CHAIN
+         SPACE 1
+QL0400   ST    R13,QLS-QLWORK+4(,R1) ADD THE SAVE AREA TO THE
+         ST    R1,8(,R13)             SAVE AREA CHAIN
+         LR    R13,R1              ESTABLISH A NEW SAVE AREA ADDRESS
+         SPACE 1
+* INITIALIZE ADDITIONAL DATA AREAS
+         SPACE 1
+         ST    R6,QLSSIZE          SAVE THE WORK AREA SIZE
+         ST    R7,QLCOUNT          SAVE COUNT
+         SPACE 1
+* BUILD THE POINTER LIST
+         SPACE 1
+         LA    R1,QLPTRS           LOAD ADDR OF THE FIRST POINTER
+         L     R6,0(,R2)           LOAD ADDRESS OF THE FIRST ELEMENT
+QL0500   LTR   R6,R6               TEST IF END OF CHAIN
+         JZ    QL0600              BR IF SO                        V1L2
+         ST    R6,0(,R1)           SAVE ADDRESS
+         LA    R1,4(,R1)           COMPUTE NEXT POINTER ADDRESS
+         L     R6,0(R3,R6)         LOAD ADDRESS OF THE NEXT AREA
+         J     QL0500                                              V1L2
+         SPACE 1
+* USE QSORT TO SORT THE POINTER LIST
+         SPACE 1
+QL0600   L     R15,=A(QSORT)       LOAD START OF QSORT
+         CALL  (15),(QLPTRS,QLCOUNT,QLWIDTH,(R4),QLSWORK),MF=(E,QSPARM)
+         SPACE 1
+* REBUILD THE CHAIN IN SORTED ORDER USING THE POINTER LIST
+         SPACE 1
+         SR    R2,R3               MAKE POINTER TO 1ST ELEMENT A DUMMY ?
+                                    ELEMENT
+         LA    R1,QLPTRS           LOAD ADDRESS OF THE FIRST POINTER
+QL0700   LA    R6,0(R3,R2)         COMPUTE ADDRESS OF POINTER TO       ?
+                                    NEXT ELEMENT
+         MVC   0(4,R6),0(R1)       COPY POINTER
+         L     R2,0(,R1)           LOAD ADDRESS OF THE ELEMENT
+         LA    R1,4(,R1)           COMPUTE NEXT POINTER ADDRESS
+         BRCT  R7,QL0700           GO DO THE NEXT ELEMENT          V1L2
+         LA    R6,0(R3,R2)         COMPUTE ADDRESS OF POINTER TO       ?
+                                    NEXT ELEMENT
+         XC    0(4,R6),0(R6)       CLEAR POINTER IN LAST ELEMENT
+         SPACE 1
+* RELEASE THE ALLOCATED STORAGE
+         SPACE 1
+         L     R0,QLSSIZE          LOAD SIZE OF ALLOCATED STORAGE
+         LR    R1,R13              COPY ADDRESS TO R1
+         L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         FREEMAIN RU,LV=(0),A=(1)  RELEASE STORAGE
+         SPACE 1
+* RETURN
+         SPACE 1
+QL0800   RETURN (14,12),T          RETURN TO CALLER
+         SPACE 1
+QLWIDTH  DC    F'4'                VALUE OF 4
+         SPACE 1
+         DC    0D'0'
+         LTORG ,
+         DC    0D'0'                                               V1L2
+         SPACE 1
+QLWORK   DSECT                     WORK AREA
+QLS      DS    9D                  SAVE AREA
+QLSWORK  DS    XL100               QSORT WORK AREA
+QLSSIZE  DS    F                   SIZE OF THIS WORK AREA
+QLCOUNT  DS    F                   NUMBER OF ELEMENTS
+QSPARM   CALL  ,(*-*,*-*,*-*,*-*,*-*),MF=L QSORT PARM LIST
+QLWORKL  EQU   *-QLWORK            LENGTH OF BASE PORTION
+QLPTRS   DS    0A                  FIRST POINTER
+         SETR  ,
+         END   ,

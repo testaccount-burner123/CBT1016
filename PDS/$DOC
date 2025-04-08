@@ -1,0 +1,80 @@
+This data set contains a mashup of Steve Myers' TSO commands.
+Each command is packaged as an unloaded PDS; retrieve the PDS
+using the RECEIVE command, for example:
+
+RECEIVE INDATASET('hlq.TSOCMND.CBT.PDS(DSSTAT)')
+
+Each PDS has more detailed documentation about the command and
+how to prepare, install and use the command.
+
+The default name of the PDS allocated by the RECEIVE command is
+userid.command.CBT.PDS.  If possible, use this name as it will
+make preparation of the command easier as the data set name will
+match the data set name used in the documentation.
+
+Member
+$DOC     - This member
+ALLOCVOL - ALLOCVOL simulates a volume definition DD statement
+           used by some IBM batch utilities.
+DSSTAT   - A command loosely modeled on the IBM LISTDS command, but
+           with more detailed, and in my opinion, useful output.
+FINDCMD  - TSO command to report the library where a TSO command,
+           or any binary program, can be found.
+           findcmd asma90
+            ASMA90 IN LINKLIST ASM.SASMMOD1
+            READY
+           findcmd iefactrt
+            IEFACTRT IN MLPA
+            READY
+FREESYS  - TSO command to free all SYSnnnnn nallocations, where
+           nnnnn is 5 numerics.
+IDUMP    - TSO command to create an image dump of one or more
+           tracks of a data set.
+INVCP    - TSO command to run a program in the link list or a
+           private library as a TSO command.  With the TSOLIB TSO
+           command, the need for something like INVCP is limited.
+KEEPITUP - A TSO command processor to keep your TSO session
+           active with no terminal activity.  It periodically
+           updates your screen with the current date & time and
+           the time your session has been active.  Many installations
+           discourage or forbid the use of a tool like this;
+           verify it is OK with your management before using KEEPITUP.
+LISTTSOU - List TSO users currently logged on.
+           listtsou asid
+            THE FOLLOWING TSO USERS ARE CURRENTLY ACTIVE -
+             BENMAR(X'003E') SMYERS(X'002D')
+LMATTR   - List a simplified module map of load modules.
+LOGTIMED - List logon information about your TSO session.
+RESETPDS - Delete all members of a PDS or PDSE, and arrange a
+           PDS so the next member added to the data set
+           immediately follows the directory.
+TIOT     - A TSO command to list the TIOT for your TSO session.
+           A useful enhancement is TIOT lists the current EXCP
+           count for each DD statement.
+           tiot f(sys0)
+            SMYERS QCBTPROC QCBTPROC
+            SYS00047 5103 CBT004 10 SMYERS.LOAD
+           The 10 between the volume serial and data set name is the
+           current EXCP count for the DD.  This is not as useful
+           as one might expect as z/OS frequently resets these
+           counters.
+TSO      - A command that will execute the command string that
+           follows the TSO command.  TSO is a convenience for
+           TSO users accustomed to entering TSO command on an
+           ISPF Command line when in TSO READY.
+TSOLPDIR - (alias LISTPDS) A TSO command to list PDS directory
+           entries.  When run in TSO in batch, TSOLPDIR is a
+           useful replacement for the IEHLIST LISTPDS command
+           without requiring the the difficult JCL setup and the
+           VOL=device-type=VVVVVV parameter on the LISTPDS command.
+XI       - A command that permits several TSO commands to be
+           stacked on one line.  The original idea for XI was
+           PCF, a long forgotten TSO add on.   More often than not,
+           PCF command stacking simply did not seem to work.  It is a
+           viable alternate to using the "Field Mark" key on real
+           3270 terminals, but its use has declined as most 3270
+           emulators do not seem to provide the "Field Mark"
+           key, require multiple key presses to enter a "Field
+           Mark," or change what a terminal operator must enter to
+           enter a "Field Mark" from release to release of
+           the terminal emulator.

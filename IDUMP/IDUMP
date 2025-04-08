@@ -1,0 +1,40 @@
+* Copy this member to SYS1.HELP
+)F Function -
+  The IDUMP command creates an image dump of the tracks in a
+  data set
+)X Syntax -
+  IDUMP  'data set'  PRINT('output data set')/
+       OUTPUT('output data set')/LIST('output data set')
+       TT('starting relative track':'ending relative track')/
+       CCHH('starting track':'ending track')
+       MOD/EXTEND  HA/NOHA  R0/NOR0  VOLUME('vvvvvv')
+       COMBINEKEY/NOCOMBINEKEY
+
+  Required - 'data set'
+  Defaults - PRINT(IDUMP.OUTPUT)  NOHA  NOR0  NOCOMBINEKEY
+
+)O Operands -
+)) 'data set' - Specify the data set containing tracks IDUMP is to
+                dump.
+))PRINT('output data set') - Specify the data set to contain the
+                             output list
+))OUTPUT('output data set') - Specify the data set to contain the
+                              output list
+))LIST('output data set') - Specify the data set to contain the
+                            output list
+))TT('starting relative track':'ending relative track') -
+            Specify the track range to dump as 1 to 4
+            hexadecimal numbers
+))CCHH('starting track':'ending track') -
+            Specify the track range to dump as 8 byte hexadecimal
+            values cccchhhh
+))MOD - Add the output to an existing data set
+))EXTEND - Add the output to an existing data set
+))HA - Print the first 8 bytes of the home address record
+))NOHA - Do not print the home address
+))R0 - Print the R0 record
+))NOR0 - Do not print the R0 record
+))COMBINEKEY - Print the key of records containing a key as though
+               it is part of the record
+))NOCOMBINEKEY - Print the key of records containing a key as
+               though it is separate from the data

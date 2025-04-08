@@ -1,0 +1,72 @@
+The RESETPDS line mode TSO command effectively deletes all
+members of a partitioned data set and arranges the data set
+attributes so the next member added to the data set follows the
+directory.
+
+Command syntax -
+  RESETPDS/RPDS  'dslist'  SHARE/SHR  VERSION
+
+  Required - 'dslist'
+  Defaults - None
+
+  'dslist' - One or more data set names of PDS or PDSE data sets
+             to reset
+  SHARE/SHR - Allocate the data sets in dslist with the SHR
+             allocation attribute.  SHARE cannot be used with
+             PDSE data sets.
+  VERSION - Print the RPDS005I message containing the version of
+            the command.
+
+            C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+OBJECT   - The object "deck" followed by the Binder control
+           statements used to prepare the RESETPDS load module.
+RESETPDS - Copy the RESETPDS member and its alias RPDS to
+           your SYS1.HELP data set
+SOURCE   - The Assembler source for RESETPDS.
+
+P R E P A R I N G   T H E   R E S E T P D S / R P D S   L O A D   M O D
+
+The JCL or TSO statements prepare a userid.RESETPDS.LOAD data
+set.  hlq.RESETPDS.CBT.PDS represents this data set.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DEETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..RESETPDS.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.RESETPDS.CBT.PDS(OBJECT)
+
+TSO -
+
+DELETE RESETPDS.LOAD
+LINK 'hlq.RESETPDS.CBT.PDS(OBJECT)' LOAD(RESETPDS) RENT REFR REUS
+
+If you prefer to link RESETPDS into a data set that has other
+members, remove the PREP step in the batch JCL and alter the DD
+statement with DD name SYSLMOD in the LINK step to meet your
+requirements.  In TSO, remove the DELETE command, and alter the
+LOAD operand in the LINK command to meet your requirements.
+
+                     T E S T I N G   R E S E T P D S
+
+Use the TSOLIB command or whatever similar facility is available
+in your environment, and then try running the command.
+
+TSOLIB ACT DATASET(RESETPDS.LOAD)
+RESETPDS ...
+
+                  I N S T A L L I N G   R E S E T P D S
+
+RESETPDS can be installed in any convenient LINKLIST library, or
+in LPA or MLPA.  It is small, less than 4K, and is RMODE ANY.
+
+                              S U P P O R T
+
+Contact the author at mvsprog@yahoo.com

@@ -1,0 +1,2212 @@
+V1L12    TITLE '   T S O   D S S T A T   C O M M A N D - D I S P L A Y >
+                 D A T A   S E T    A T T R I B U T E S'
+***********************************************************************
+*                                                                     *
+* TITLE -- DSSTAT                                                     *
+*                                                                     *
+* FUNCTION / OPERATION -- DSSTAT LISTS ATTRIBUTES ABOUT DATA SETS     *
+*                                                                     *
+* STATUS / CHANGE LEVEL                                               *
+*   AUGUST 2021 -- V1L12                                              *
+*    1) ASSEMBLER TITLE ALTERED TO FILL THE PAGE HEADER               *
+*    2) MEMBER COMMAND LINE OPTION CHANGED TO MEMBERS TO MATCH LISTDS *
+*    3) REPORT PDSE SPACE USAGE.  THE CODE TO OBTAIN USED AND         *
+*       ALLOCAZTED PAGES IS A RIP OFF OF THE LDS COMMAND IN CBT FILE  *
+*       452.  THE CODE TO TRANFORM USED PAGES TO USED TRACKS IS MY    *
+*       CODE.                                                         *
+*    4) PARTIAL SUPPORT FOR EADSCB                                    *
+*   JULY 2021 -- V1L11                                                *
+*     1)  CONVERTED TO AMODE 31, RMODE ANY                            *
+*   JULY 2007 - V1L10                                                 *
+*     INCREMENTAL IMPROVEMENTS                                        *
+*     1)  DIRECTORY STATISTICS FORMAT MODIFIED                        *
+*     2)  NUMBER OF DIRECTORY ENTRIES AND ALIAS ENTRIES PRINTED WITH  *
+*         DIRECTORY STATISTICS                                        *
+*   APRIL 2007 -- V1L9                                                *
+*     INCREMENTAL IMPROVEMENT                                         *
+*     1)  ADD RECALL / NORECALL TO COMMAND LINE.  IF RECALL IS        *
+*         SPECIFIED ALLOCATION CAN RECALL THE DATA SET FROM           *
+*         MIGRATION STATUS.                                           *
+*   OCT 2006 -- V1L8                                                  *
+*     MAINTENANCE -                                                   *
+*     1)  ABEND S0C4 IN LABEL PROCESSING IF MORE THAN 16 EXTENTS IN   *
+*         DATA SET                                                    *
+*   SEP 2006 -- V1L7                                                  *
+*     INCREMENTAL IMPROVEMENTS -                                      *
+*     1)  ADD RELATIVE TRACK OF START OF EXTENT IN EXTENTS            *
+*         OUTPUT                                                      *
+*     2)  UPDATE LISTING OF A DIRECTORY ENTRY TO INCLUDE THE          *
+*         MEMBER NAME                                                 *
+*     3)  FORMAT DIRECTORY ENTRY CONTAINING SPF STATISTICS            *
+*         IN AN SPF LIKE DISPLAY FORMAT                               *
+*     MAINTENANCE -                                                   *
+*     1)  ADD ADDITIONAL DIGITS TO EXTENT SIZE TO SUPPORT EXTENT      *
+*         SIZES > 100K                                                *
+*     2)  USE MACRF=R, DSORG=PO IN DCB USED FOR BLDL OF A             *
+*         DIRECTORY ENTRY TO ALLOW FOR PDSE                           *
+*     3)  EXTEND SUPPORT FOR BYPASS REFDATE UPDATE TO INCLUDE         *
+*         OPEN FOR BLDL                                               *
+*   JUL 2006 -- V1L6                                                  *
+*     MAINTENANCE -                                                   *
+*     1)  ADDED SUPPORT TO BYPASS LAST USE DATE UPDATE WHEN MEMBER    *
+*         OR DIRSTAT OPTION SPECIFIED.                                *
+*   JUN 2005 -- V1L5                                                  *
+*     MAINTENANCE -                                                   *
+*     1)  SUPPORT DATA SETS WITH > 99,999 TRACKS ALLOCATED.           *
+*     2)  SUPPORT SEQUENTIAL DATA SETS WITH > 65,535 TRACKS USED.     *
+*   APR 2003 -- V1L4                                                  *
+*     MAINTENANCE -                                                   *
+*     1) CORRECTED ADDRESS SPACE BEING TRASHED WHEN RUNNING IN TSO IN *
+*        BATCH                                                        *
+*     2) CHANGED TO IKJPUTL IN PLACE OF IKJEFF02 IN TPUT ROUTINE      *
+*     3) ADDITIONAL SMS SUPPORT                                       *
+*   JAN 1997 -- V1L3                                                  *
+*     MAINTENANCE --                                                  *
+*     1) CORRECTED PROBLEM CALCULATING ALLOCATED TRACKS WHEN 0        *
+*        EXTENTS ALLOCATED                                            *
+*     2) ASSEMBLED COPYRIGHT INFORMATION UPDATED                      *
+*   JAN 1997 -- V1L2                                                  *
+*     FUNCTIONAL ENHANCEMENTS -- NONE                                 *
+*     INCREMENTAL IMPROVEMENTS --                                     *
+*     1) ADDED PARTIAL SMS SUPPORT TO INSERT THE STORAGE CLASS,       *
+*        MANAGEMENT CLASS, AND DATA CLASS INTO THE OUTPUT             *
+*     MAINTENANCE --                                                  *
+*     1) ASSEMBLED COPYRIGHT INFORMATION UPDATED                      *
+*   AUG 31, 1994 -- V1L1                                              *
+*     FUNCTIONAL ENHANCEMENTS -- NONE                                 *
+*     INCREMENTAL IMPROVEMENTS --                                     *
+*     1) ADDED SUPPORT FOR 4 BYTE DEVICE NAMES.                       *
+*     MAINTENANCE --                                                  *
+*     1) SUPPORT DATA SET ALIASES                                     *
+*     2) LOCATION OF LOGICAL DEVICE NAME MOVED 1 BYTE TO RIGHT        *
+*     3) ASSEMBLED COPYRIGHT INFORMATION UPDATED                      *
+*   NOV 30, 1991 -- V1L0                                              *
+*                                                                     *
+* COMMAND SYNTAX --                                                   *
+*   DSSTAT  DSN-LIST               LIST OF DATA SET TO FORMAT         *
+*             MEMBER               LIST MEMBERS IN PO DATA SETS       *
+*             EXTENTS              LIST EXTENTS                       *
+*             SQUISH               LIST MEMBER LISTING IN COMPRESED   *
+*                                  FORMAT                             *
+*             VOLUME(VOLUME-SERIAL)  DATA SETS LOCATED ON THIS VOLUME *
+*                                                                     *
+*     IF A DATA SET NAME IN THE DSN-LIST INCLUDES A MEMBER NAME, AND  *
+*     THE DATA SET IS PARTITIONED, DETAILED DATA ABOUT THE MEMBER     *
+*     APPEARS.                                                        *
+*                                                                     *
+* ATTRIBUTES -- THIS MODULE IS REENTRANT, REFRESHABLE, AND REUSUABLE. *
+*     IT OPERATES IN PROBLEM STATE AND PROBLEM KEY.  IT USES NO       *
+*     AUTHORIZED OPERATING SYSTEM SERVICES.  THIS PROGRAM OPERATES    *
+*     AMODE 31, RMODE ANY.                                            *
+*                                                                     *
+* EXTERNAL ROUTINES -- IKJPARS, IKJEFF02, IKJEFF18 (TSO)              *
+*     DATA MANAGEMENT, AS REQUIRED                                    *
+*                                                                     *
+***********************************************************************
+         EJECT
+         MACRO
+         SETR
+         LCLA  &A
+.L       AIF   (&A GT 15).X
+R&A      EQU   &A
+&A       SETA  &A+1
+         AGO   .L
+.X       MEND
+         SPACE 5
+         MACRO
+&NAME    GENOFF &BLOCK
+         LCLA  &A
+         LCLC  &C
+&NAME    DC    0H'0'
+&A       SETA  1
+.L       AIF   (&A GE N'&SYSLIST).X
+&A       SETA  &A+1
+         AIF   (N'&SYSLIST(&A) EQ 2).TWOOPS
+&C       SETC  'L'''.'&SYSLIST(&A)'
+         DC    0AL2(0),AL1(&SYSLIST(&A)-&BLOCK,&C)
+         AGO   .L
+.TWOOPS  ANOP
+         DC    0AL2(0),AL1(&SYSLIST(&A,1)-&BLOCK,&SYSLIST(&A,2))
+         AGO   .L
+.X       DC    0AL2(0),X'FFFF'
+         MEND
+         EJECT
+DSSTAT   CSECT                     DEFINE PROGRAM CSECT
+DSSTAT   AMODE 31
+DSSTAT   RMODE ANY
+         SETR                      DEFINE SYMBOLIC REGISTER NAMES
+*        SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         B     SAVEREGS-*(,R15)
+         DC    AL1(IDL)
+ID       DC    C'DSSTAT COMMAND -- V1L12 -- &SYSDATE &SYSTIME'    V1L12
+*        DC   C' COPYRIGHT (C) 1991,1994,1997 BOEING COMPUTER SERVICES'
+*        DC    C', 1998 BOEING SHARED SERVICES GROUP, PHILADELPHIA DIVI?
+               SION'
+         DC    C', COPYRIGHT (C) 1991-2021 J. STEPHEN MYERS'      V1L12
+IDL      EQU   *-ID
+SAVEREGS STM   R14,R12,12(R13)
+         BALR  R12,0               STORE CURRENT ADDRESS IN R12
+         USING *,R12               ESTABLISH PROGRAM ADDRESSING
+         LR    R2,R1               COPY CPPL ADDRESS TO R2
+*        WTO   'ALLOCATING WORK AREA'
+         LA    R5,WORKL            LOAD LENGTH OF THE WORK AREA
+         GETMAIN R,LV=(R5)         ALLOCATE STORAGE FOR THE WORK AREA
+         LR    R4,R1               COPY STORAGE ADDRESS TO R4
+         SR    R15,R15             SET R15 = 0
+         MVCL  R4,R14              CLEAR THE ENTIRE WORK AREA
+         LR    R11,R1              COPY WORK AREA ADDRESS TO R11
+*        WTO   'INITIALIZING WORK AREA'
+         USING MAINWORK,R11        ESTABLISH WORK AREA ADDRESSABILITY
+         LA    R15,S               LOAD ADDRESS OF THE 1ST SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO CALLER'S
+         ST    R15,8(,R13)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH A NEW SAVE AREA POINTER
+         LA    R0,DSNLIST          INITIALIZE LAST DSNLIST ENTRY
+         ST    R0,DSNLIST+4
+         L     R1,CVTPTR           LOAD CVT ADDRESS
+         L     R1,CVTTCBP-CVTMAP(,R1) LOAD ADDR OF TCB POINTER WORDS
+         L     R1,4(,R1)           LOAD TCB ADDRESS
+         L     R1,TCBTIO-TCB(,R1)  LOAD TIOT ADDRESS
+         ST    R1,MYTIOT           SAVE TIOT ADDRESS
+         USING CPPL,R2             ESTABLISH CPPL ADDRESSABILITY
+         USING PPL,R3              ESTABLISH PPL ADDRESSABILITY
+         USING IOPL,MYIOPL         ESTABLISH IOPL ADDRESSABILITY
+         LA    R3,MYPPL            LOAD ADDRESS OF MY PPL
+         ST    R2,MTCPPLP          SAVE CPPL ADDRESS FOR IKJEFF02
+         ST    R2,DFCPPLP          SAVE CPPL ADDRESS FOR IKJEFF18
+         L     R0,CPPLCBUF         LOAD COMMAND BUFFER ADDRESS
+         ST    R0,PPLCBUF           SAVE IN PPL
+         L     R0,CPPLECT          LOAD ECT ADDRESS
+         ST    R0,PPLECT            SAVE IN PPL
+         ST    R0,IOPLECT            SAVE IN IOPL
+         L     R0,CPPLUPT          LOAD UPT ADDRESS
+         ST    R0,PPLUPT            SAVE IN PPL
+         ST    R0,IOPLUPT            SAVE IN IOPL
+         LA    R0,ECB              LOAD ECB ADDRESS
+         ST    R0,PPLECB            SAVE IN PPL
+         ST    R0,IOPLECB            SAVE IN IOPL
+         ST    R0,MTECBP              AND IN IKJEFF02'S PARM LIST
+         L     R0,=A(MAINPCL)      LOAD ADDRESS OF THE MAIN PCL
+         ST    R0,PPLPCL            SAVE IN PPL
+         LA    R0,PDLPTR1          LOAD ADDRESS OF A PDL PROINTER
+         ST    R0,PPLANS            SAVE IN PPL
+         LOAD  EPLOC=IKJEFF02      LOAD IKJEFF02
+         ST    R0,FF02PTR          SAVE ITS ADDRESS
+         LA    R0,FF02PTR          LOAD ADDRESS OF THE POINTER
+         ST    R0,DFJEFF02         STORE IN IN IKJEFF02'S PARM LIST
+         L     R0,=A(MSGS)         LOAD ADDRESS OF MSG SKELETONS FOR   ?
+                                    IKJTSMSG
+         ST    R0,MTCSECTP         SAVE IT
+         LA    R0,MTCSECTP         LOAD ADDR OF CSECT POINTER
+         ST    R0,MTPLPTR          STORE IN BASIC PARM LIST
+         LOAD  EPLOC=IKJPUTL       LOAD IKJPUTL
+         ST    R0,PUTLADDR         SAVE ITS ADDRESS
+         DROP  R2,R3               KILL CPPL AND PPL ADDRESSABILITY
+*        WTO   'BEFORE IKJPARS'
+         LINK  SF=(E,CALLPARS),    ANALYZE THE COMMAND LINE            ?
+               MF=(E,MYPPL)
+         LR    R2,R15
+*        WTO   'AFTER IKJPARS'
+*        GETMAIN VRU,LV=(1*1024*1024,64*1024),LOC=(BELOW,ANY)
+*        FREEMAIN R,LV=(0),A=(1)
+         LR    R15,R2
+         LTR   R15,R15             TEST RC FROM IKJPARS
+         BNZ   PARSERR             BR IF ERROR
+         L     R2,PDLPTR1          LOAD ADDRESS OF THE PDL
+         USING MAINPDL,R2
+         LA    R3,MAINDSN          LOAD ADDRESS OF THE 1ST DSN PDE
+DSNL0100 L     R1,=A(DYNALOLD)     LOAD ADDRESS OF THE DYNALLOC        ?
+                                    PARM LIST SKELETON
+         MVC   XALLOC(DYNAOLEN),0(R1) COPY IT TO MY WORK AREA
+         LA    R0,2                SET REG 0 = 2                   V1L9
+         CLM   R0,B'0011',RECALLKW TEST IF NORECALL                V1L9
+         BNE   *+8                 BR IF NOT                       V1L9
+         OI    (S99FLG11-S99RB)+(DYNAORB-DYNALOLD)+(XALLOC),S99NOMIG L9
+         LA    R1,XALLOC           LOAD ADDRESS OF THE RB POINTER
+         L     R15,=A(DYNRELOC)    LOAD ADDRESS OF DYNRELOC
+         CALL (15)                 RELOCATE ADDRESS CONSTANTS
+         LA    R14,DYNAODSN-DYNALOLD+XALLOC LOAD START OF DSN
+         LA    R15,L'DYNAODSN      LOAD LENGTH OF DSN
+         LH    R1,4(,R3)           LOAD LENGTH OF DSN IN PDE
+         O     R1,=AL1(C' ',0,0,0) ADD IN FILL CHARACTER
+         L     R0,0(,R3)           LOAD START OF DSN IN PDE
+         MVCL  R14,R0              COPY DSN
+         TM    VOLV+6,X'80'        TEST IF VOL PARM SPECIFIED
+         BZ    DSNL0200            BR IF NOT
+         LH    R15,DYNAOVOL-DYNALOLD+XALLOC-2 LOAD LENGTH OF VOL
+         LA    R14,DYNAOVOL-DYNALOLD+XALLOC   LOAD START OF VOL
+         L     R0,VOLV             LOAD START OF VOLSER
+         LH    R1,VOLV+4           LOAD LENGTH OF VOLSER
+         O     R1,=AL1(C' ',0,0,0) ADD IN FILL CHARACTER
+         MVCL  R14,R0              COPY VOLUME SERIAL TO WORK AREA
+         B     DSNL0300
+DSNL0200 XC    DYNAOVOL-DYNALOLD+XALLOC-6,DYNAOVOL-DYNALOLD+XALLOC-6
+         XC    DYNAOTU3-DYNALOLD+XALLOC,DYNAOTU3-DYNALOLD+XALLOC
+DSNL0300 LA    R1,XALLOC           LOAD ADDRESS OF THE RB POINTER
+         DYNALLOC ,                TRY TO ALLOCATE THE DATA SET
+         LTR   R15,R15             TEST RC FROM DYNALLOC
+         BZ    DSNL0600            BR IF ALLOCATION OK
+         SPACE 1
+* ALLOCATION FAILED - USE IKJEFF18 TO FORMAT A SEMI-DECENT (AND
+*    STANDARD) MESSAGE
+         SPACE 1
+         ST    R15,FWORK1          SAVE RC IN FWORK1
+         LA    R0,FWORK1           LOAD ADDRESS OF FWORK1
+         ST    R0,DFRCP            STORE IN THE DF PARMLIST
+         MVC   FWORK2(2),=AL1(0,DFSVC99) COPY REPORT FLAGS TO FWORK2
+         LA    R0,FWORK2           LOAD ADDRESS OF FWORK2
+         ST    R0,DFIDP            STORE IN DF PARMLIST
+         L     R0,XALLOC           LOAD ADDRESS OF THE RB
+         N     R0,=X'7FFFFFFF'     TURN OFF HIGH ORDER BIT
+         ST    R0,DFS99RBP         STORE RB ADDRESS IN PARM LIST
+         LINK  SF=(E,CALLDF),      FORMAT THE MESSAGE                  ?
+               MF=(E,DFPARMS)
+         LA    R0,X'278'           LOAD CODE TO CHECK IF MIGRATED  V1L9
+         CLM   R0,B'0011',(S99ERROR-S99RB)+(DYNAORB-DYNALOLD)+XALLOC L9
+         BE    DSNL0700            BR IF SO, JUST IGNORE IT        V1L9
+         SPACE 1
+* USE PARSE TO PROMPT FOR A NEW DATA SET NAME
+         SPACE 1
+         LA    R0,PDLPTR2          UPDATE THE PPL
+         ST    R0,PPLANS-PPL+MYPPL
+         L     R0,=A(DSNPCL)
+         ST    R0,PPLPCL-PPL+MYPPL
+         MVC   DUMMYBUF(MASTBUFL),MASTBUF COPY DUMMY COMMAND BUFFER TO ?
+                                    THE WORK AREA
+         LA    R0,DUMMYBUF         LOAD ADDRESS OF THE DUMMY BUFFER
+         ST    R0,PPLCBUF-PPL+MYPPL STORE DUMMY BUFFER ADDR IN PPL
+         LINK  SF=(E,CALLPARS),    USE PARSE TO GET A NEW DSN          ?
+               MF=(E,MYPPL)
+         LTR   R15,R15             TEST RC FROM PARS
+         BNZ   PARSERR             BR IF ERROR
+         L     R15,PDLPTR2         LOAD PDL ADDRESS
+         MVC   0(3*8,R3),DSNDSN-DSNPDL(R15) COPY DSN PDE TO REPLACE    ?
+                                    ORIGINAL, FAILING, PDE
+*        IKJRLSA PDLPTR2
+         SPACE 1
+* WE CAN'T IKJRLSA BECAUSE THE DSN IS IN ALLOCATED STORAGE.  SO WE
+* ADD THE NEW STORAGE TO THE END OF STORAGE FOR THE FIRST PDL.  THIS
+* FEAT REQUIRES KNOWLEDGE OF THE STRUCTURE OF THE PDL
+         SPACE 1
+         LA    R1,PDLPTR1          LOAD ADDRESS OF THE PDL
+DSNL0400 ICM   R0,B'0111',1(R1)    LOAD ADDRESS OF THE NEXT PDL BLK
+         BZ    DSNL0500            BR IF END OF CHAIN
+         LR    R1,R0               COPY NEW ADDRESS TO R1
+         B     DSNL0400            CONTINUE
+DSNL0500 MVC   0(4,R1),PDLPTR2     ADD NEW PDE TO THE CHAIN
+         B     DSNL0100            GO DO THE NEXT DATA SET
+         EJECT
+DSNL0600 DC    0H'0'
+*        WTO   'ALLOCATING DSN'
+         LA    R0,DSNLEN           LOAD LENGTH OF A DSN AREA
+         GETMAIN R,LV=(0)          ALLOCATE STORAGE FOR A DSN
+         L     R15,DSNLIST+4       ADD NEW DSN ENTRY TO END
+         ST    R1,DSNLIST+4         OF CHAIN OF ALL DSN ENTRIES
+         ST    R1,DSNNEXT-DSN(,R15)
+         XC    0(DSNLEN,R1),0(R1)  CLEAR THE NEW WORK AREA
+         ST    R3,DSNPDE-DSN(,R1)  STORE PDE ADDRESS IN THE DSN AREA
+         MVC   DSNDSORG-DSN(,R1),DYNAOORG-DYNALOLD+XALLOC COPY DSORG
+         LA    R14,DSNDDN-DSN(,R1) LOAD START OF DDN FROM DYNALLOC
+         LA    R15,L'DSNDDN        LOAD LENGTH OF DDN AREA
+         LA    R4,DYNAODDN-DYNALOLD+XALLOC   LOAD ADDRESS OF THE DDN
+         LH    R5,DYNAODDN-DYNALOLD+XALLOC-2 LOAD DDN LENGTH
+         O     R5,=AL1(C' ',0,0,0) ADD IN FILL CHARACTER
+         MVCL  R14,R4              COPY DDN FROM DYNALLOC TO DSN AREA
+         LA    R14,DSNDSNA-DSN(,R1) LOAD ADDRESS OF DSNAME
+         LA    R15,L'DSNDSNA       LOAD LENGTH
+         LA    R4,DYNAADSN-DYNALOLD+XALLOC
+         LH    R5,DYNAADSN-DYNALOLD+XALLOC-2
+         O     R5,=AL1(C' ',0,0,0) ADD IN FILL CHARACTER
+         MVCL  R14,R4              COPY DSN FROM DYNALLOC TO DSN AREA
+         LA    R14,DSNDSNP-DSN(,R1) LOAD ADDRESS OF DSNAME
+         LA    R15,L'DSNDSNP       LOAD LENGTH
+         LA    R4,DYNAODSN-DYNALOLD+XALLOC
+         LH    R5,DYNAODSN-DYNALOLD+XALLOC-2
+         O     R5,=AL1(C' ',0,0,0) ADD IN FILL CHARACTER
+         MVCL  R14,R4              COPY DSN FROM DYNALLOC TO DSN AREA
+DSNL0700 L     R3,3*8(,R3)         LOAD ADDRESS OF THE NEXT PDE    V1L9
+         N     R3,=X'00FFFFFF'     TURN OFF FLAGS
+         BNZ   DSNL0100            BR IF NO MORE DSN PDES
+         SPACE 1
+         DROP  R2                  KILL MAINPDL ADDRESSABILITY
+         EJECT
+         CNOP  0,8
+DSNL1000 GTSIZE ,                  GET TERMINAL ARCHITECTURE
+         LTR   R0,R0               TEST IF DISPLAY (RATHER THAN HARD   ?
+                                    COPY DEVICE)
+         BZ    DSNL1010            BR IF NOT
+         BCTR  R1,0                REDUCE MAX LINE WIDTH BY 2
+         BCTR  R1,0
+DSNL1010 LA    R0,L'XLINE          LOAD LENGTH OF MY LINE
+         CR    R1,R0               COMPARE TERMINAL WIDTH WITH         ?
+                                    LINE LENGTH
+         BNH   DSNL1020            BR IF LINE FITS ON SCREEN
+         LR    R1,R0               RESET MAXIMUM LINE WIDTH
+DSNL1020 ST    R1,MAXLINE          SAVE LINE WIDTH
+         LA    R2,DSNLIST-(DSNNEXT-DSN) LOAD ADDR OF "FIRST" DSN
+         USING DSN,R2              ESTABLISH DSN ADDRESSABILITY
+DSNL1100 L     R2,DSNNEXT          LOAD ADDRESS OF THE NEXT DSN AREA
+         LTR   R2,R2               TEST IF END OF DSN CHAIN
+         BZ    EXIT0000            BR IF SO
+         MVC   DS1DSNAM,DSNDSNA    COPY DSNAME TO F1 DSCB
+         MVC   XLINE(L'DSNDSNA),DSNDSNA COPY DNAME TO LINE
+         LA    R14,XLINE+L'DSNDSNA LOAD END OF DSNAME AREA
+DSNL1110 BCTR  R14,0               LOCATE THE END OF THE DSNAME
+         CLI   0(R14),C' '
+         BE    DSNL1110
+         LA    R14,1(,R14)
+         L     R3,DSNPDE           LOAD ADDRESS OF THE INPUT PDE
+         TM    8+6(R3),X'80'       TEST IF MEMBER NAME SPECIFIED
+         BZ    DSNL1120            BR IF NOT
+         MVC   DWORK1(2),DSNDSORG  COPY DSORG TO DWORK1
+         NC    DWORK1(2),=AL1(DCBDSGPO,0) AND IN DSORG = PO
+         BZ    DSNL1120            EXIT IF NOT DSORG = PO
+         MVI   0(R14),C'('         ADD LEADING PAREN
+         LA    R14,1(,R14)         COMPUTE START OF MEMBER
+         LH    R15,8+4(,R3)        LOAD LENGTH FROM PDE
+         L     R0,8+0(,R3)         LOAD ADDR FROM PDE
+         LR    R1,R15              COPY LENGTH TO R1
+         MVCL  R14,R0              COPY MEMBER NAME TO LINE
+         MVI   0(R14),C')'         ADD TRAILING PAREN
+         LA    R14,1(,R14)
+DSNL1120 CLC   DSNDSNA,DSNDSNP     COMPARE TRUE NAME OF THE DSN W/     ?
+                                    DSNAME WE TRIED TO ALLOCATED
+         BE    DSNL1140            BR IF THEY ARE THE SAME
+         MVC   0(5,R14),=C' <-- '
+         MVC   5(L'DSNDSNP,R14),DSNDSNP
+         LA    R14,5+L'DSNDSNP(,R14) GET END OF ALLOCATION DSN
+DSNL1130 BCTR  R14,0               LOCATE END OF ALLOCATION DSN
+         CLI   0(R14),C' '
+         BE    DSNL1130
+         LA    R14,1(,R14)
+DSNL1140 LA    R1,XLINE            LOAD START OF LINE
+         LR    R0,R14              COPY CURRENT POSITION TO R0
+         SR    R0,R1               COMPUTE USED PORTION OF LINE
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT ROTUINE
+         CALL  (15)                WRITE MESSAGE TO TERMINAL
+DSNL1200 LR    R1,R2               COPY DSN POINTER TO R1
+         L     R15,=A(LISTMEMB)    LOAD ADDR OF LISTMEMB
+         CALL  (15)                GO DO IT
+         L     R3,MYTIOT           LOAD ADDRESS OF THE TIOT
+         LA    R3,TIOENTRY-TIOT(,R3) LOAD ADDR OF THE 1ST DD ENTRY
+         SR    R0,R0               SET R0 = 0
+DSNL1300 CLI   TIOELNGH-TIOENTRY(R3),0 TEST IF END OF TIOT
+         BE    DSNL8100            BR IF SO
+         CLC   TIOEDDNM-TIOENTRY(,R3),DSNDDN COMPARE TIOT DDNAME WITH  ?
+                                    DDNAME THAT WAS SUPPOSED TO HAVE   ?
+                                    BEEN ALLOCATED
+         BE    DSNL1400            BR IF ALLOCATED DD FOUND
+         IC    R0,TIOELNGH-TIOENTRY(,R3) LOAD LENGTH OF THIS TIOT DD   ?
+                                    ENTRY
+         AR    R3,R0               COMPUTE ADDRESS OF THE NEXT TIOT DD ?
+                                    ENTRY
+         B     DSNL1300            CONTINUE SCAN
+DSNL1400 LA    R1,=C'--UNIT---DEVICE---VOLUME--RECFM--LRECL--BLKSIZE--D?
+               SORG--ALLOCATED---USED' LOAD ADDR OF HEADER         V1L5
+         LA    R0,72               LOAD LENGTH                     V1L5
+         L     R15,=A(TPUT)        LOAD ADDRESS OF TPUT
+         CALL  (15)                WRITE THE HEADER
+         LA    R15,71              SET LENGTH
+         LA    R14,XLINE           LOAD START OF OUTPUT LINE
+         L     R1,=AL1(C' ',0,0,0) LOAD FILL CHARACTER
+         MVCL  R14,R0              CLEAR THE OUTPUT LINE
+         SR    R1,R1
+         ICM   R1,B'0111',TIOEFSRT-TIOENTRY(R3) LOAD UCB ADDRESS
+         MVC   XLINE+2(3),UCBNAME-UCBOB(R1) COPY DEVICE NAME TO XLINE
+         L     R15,CVTPTR          LOAD ADDRESS OF THE CVT
+         TM    CVTDCB-CVTMAP(R15),CVTOSEXT TEST IF OPTION BITS PRESENT
+         BZ    NOT401              BR IF NOT
+         TM    CVTOSLV0-CVTMAP(R15),CVTUCBSV TEST IF UCB SVCS PRESENT
+         BZ    NOT401              BR IF NOT
+         UNPK  XLINE+2(5),UCBCHAN-UCBOB(3,R1) CONVERT 4-BYTE DEVICE
+         TR    XLINE+2(4),HEXTAB               NAME TO EBCDIC
+         MVI   XLINE+2+4,C' '
+         MVC   XLINE+18(6),UCBVOLI-UCBOB(R1) COPY VOL SER TO XLINE
+NOT401   ST    R1,DSNUCB           SAVE THE UCB ADDRESS
+*        SR    R15,R15             SET R15 = 0
+         IC    R15,UCBTBYT4-UCBOB(,R1) LOAD THE DEVICE TYPE CODE
+         N     R15,=A(X'0F')       TURN OFF ANY EXTRANEOUS HIGH ORDER  ?
+                                    BITS THAT I'VE NEVER SEEN
+         L     R14,CVTPTR          LOAD THE ADDRESS OF THE CVT
+         L     R14,CVTZDTAB-CVTMAP(,R14) GET THE ADDRESS OF THE DASD   ?
+                                    DEVICE LOOKUP TABLE
+         IC    R15,0(R15,R14)      LOAD OFFSET OF AN ENTRY IN THE DASD ?
+                                    DEVICE CHARACTERISTICS TABLE
+         AR    R14,R15             COMPUTE ADDRESS OF THE ENTRY
+         ST    R14,DSNZDTAB        SAVE THE ADDRESS
+         MVC   MYCAMLST(CAMLST1L),CAMLST1 COPY CAMLST BASE TO WORK AREA
+         LA    R0,3                LOAD NUMBER OF CONSTANTS
+         LA    R15,MYCAMLST+4      LOAD ADDRESS OF THE FIRST CONSTANT
+DSNL1500 L     R1,0(,R15)          LOAD OFFSET
+         AR    R1,R11              COMPUTE ADDRESS
+         ST    R1,0(,R15)          STORE ADDRESS
+         LA    R15,4(,R15)         COMPUTE NEXT CAMLST ADDRESS
+         BCT   R0,DSNL1500         LOOP UNTIL DONE
+         L     R1,DSNUCB           LOAD UCB ADDRESS
+         LA    R1,UCBVOLI-UCBOB(,R1) LOAD ADDRESS OF THE VOLUME SERIAL
+         ST    R1,MYCAMLST+8       STORE VOLSER ADDRESS IN CAMLST
+         L     R0,DSNUCB           LOAD UCB ADDRESS
+         OBTAIN MYCAMLST           READ F1 DSCB FOR DATA SET
+         LTR   R15,R15             TEST RC
+         BNZ   DSNL8200            BR IF NOT READ
+         LM    R15,R1,=A(RECFMTB,3,RECFMTBE) LOAD RECFM LOOKUP ADDRS
+         LA    R14,XLINE+26        LOAD START OF RECFM OUTPUT AREA
+DSNL1600 MVC   DWORK1(1),DS1RECFM  COPY RECFM TO DWORK1
+         NC    DWORK1(1),0(R15)    CLEAR INSIGNIFICANT BITS
+         CLC   DWORK1(1),1(R15)    TEST IF SIGNIFICANT BITS MATCH
+         BNE   DSNL1700            BR IF NOT
+         MVC   0(1,R14),2(R15)     COPY CODE TO OUTPUT
+         LA    R14,1(,R14)         COMPUTE NEXT OUTPUT LOCATION
+DSNL1700 BXLE  R15,R0,DSNL1600     BR THROUGH THE RECFM TABLE
+         LM    R15,R1,=A(DSORGTB,5,DSORGTBE) LOAD DSORG LOOKUP ADDRS
+DSNL1800 CLC   DS1DSORG(2),0(R15)  COMPARE DSORK IN F1 DSCB WITH TEST
+         BE    DSNL1900            BR IF MATCH
+         BXLE  R15,R0,DSNL1800     LOOP THROUGH TABLE
+* R15 POINTS TO A DUMMY ENTRY IF BXLE FALLS THROUGH
+DSNL1900 MVC   XLINE+50(3),2(R15)  COPY DSORG TO XLINE
+         CLC   =C'PO',XLINE+50     TEST IF DSORG = PO
+         BNE   DSNL1910            BR IF NOT
+         TM    DS1SMSFG,DS1PDSE    TEST IF PDSE
+         BO    DSNL1920            BR IF SO TO ADD E
+         B     DSNL1960            EXIT SMS SUPPORT
+DSNL1910 TM    DS1SMSFG,DS1PDSEX   TEST IF HFS
+         BO    DSNL1950            BR IF SO
+         TM    DS1SMSFG,DS1PDSE+DS1STRP  TEST IF PDSE OR EXTENDED
+         BZ    DSNL1960            BR IF NOT
+DSNL1920 LA    R15,XLINE+52        LOAD END OF DSORG AREA
+DSNL1930 TM    0(R15),255-C' '     TEST IF BLANK
+         BNZ   DSNL1940            BR IF NOT
+         BCT   R15,DSNL1930        CONTINUE SCAN IF BLANK
+         DC    H'0'                BETTER NEVER EVER HIT HERE!
+DSNL1940 MVI   1(R15),C'E'         ADD EXTENDED FORMAT CODE
+         B     DSNL1960            EXIT NEW SMS SUPPORT
+DSNL1950 MVC   XLINE+50(3),=C'HFS' HFS DATA SET
+DSNL1960 DC    0H'0'
+         MVC   XLINE+32(6),=X'402020202120' COPY EDIT MASK TO XLINE
+         LH    R0,DS1LRECL         LOAD LRECL
+         CVD   R0,DWORK1           CONVERT LRECL TO
+         ED    XLINE+32(6),DWORK1+5 PRINTABLE DECIMAL
+         MVC   XLINE+40(6),=X'402020202120'
+         LH    R0,DS1BLKL          LOAD BLOCK LENGTH
+         CVD   R0,DWORK1           CONVERT BLOCK LENGTH TO
+         ED    XLINE+40(6),DWORK1+5 PRINTABLE DECIMAL
+* READ THE ENTIRE CHAIN OF FORMAT 2 AND FORMAT 3 DSCBS
+         LA    R4,F1DSCB-(F2DSCB-F2F3DSCB) LOAD ADDR OF DUMMY F2/F3    ?
+                                             DSCB
+         USING F2F3DSCB,R4         ESTABLISH ADDRESSABILITY
+         XC    F2F3(8),F2F3        CLEAR POINTER
+         LA    R0,F2F3-(F2F3NEXT-F2F3DSCB) LOAD ADDR OF DUMMY ENTRY
+         ST    R0,F2F3+4           STORE IT
+DSNL2000 OC    DS3PTRDS,DS3PTRDS   TEST IF END OF CHAIN
+         BZ    DSNL2100            BR IF SO
+*        WTO   'ALLOCATING F2F3 BLOCK'
+         LA    R0,F2F3LEN          LOAD LENGTH OF AN F2F3 BLOCK
+         GETMAIN R,LV=(0)          ALLOCATE STORAGE FOR AN F2F3 BLK
+         LR    R5,R1               COPY STORAGE ADDRESS TO R5
+         XC    0(F2F3LEN,R5),0(R5) CLEAR THE BLOCK
+         L     R15,F2F3+4          ADD NEW BLOCK TO CHAIN OF
+         ST    R1,F2F3+4            FORMAT 2 AND 3 DSCBS
+         ST    R1,F2F3NEXT-F2F3DSCB(,R15)
+         MVC   MYCAMLST(CAMLST2L),CAMLST2 COPY CAMLST BASE
+         LA    R0,DS3PTRDS         LOAD PTRDS ADDR
+         ST    R0,MYCAMLST+4       STORE IN CAMLST
+         L     R1,DSNUCB           LOAD UCB ADDRESS
+         LA    R1,UCBVOLI-UCBOB(,R1) COMPUTE ADDRESS OF VOLSER IN UCB
+         ST    R1,MYCAMLST+8       STORE IN CAMLST
+         LA    R1,F3DSCB-F2F3DSCB(,R5) LOAD ADDR OF OUTPUT AREA
+         ST    R1,MYCAMLST+12      STORE IN CAMLST
+         L     R0,DSNUCB           LOAD UCB ADDRESS
+         OBTAIN MYCAMLST           ATTEMPT TO READ F2/F3 DSCB
+         LTR   R15,R15             TEST RC
+         BNZ   DSNL8200            BR IF ERROR
+         LR    R4,R5               MAKE NEW F2F3 ENTRY CURRENT ENTRY
+         B     DSNL2000            CONTINUE READ LOOP
+         DROP  R4
+DSNL2100 SR    R0,R0               SET R0 = 0
+         SR    R9,R9               SET TOTAL TRACK COUNT TO 0
+         IC    R0,DS1NOEPV         LOAD NUMBER OF EXTENTS
+         LTR   R0,R0               TEST IF ANY EXTENTS ASSIGNED
+         BZ    DSNL2900            BR IF NOT
+         LA    R1,DS1EXT1          LOAD ADDRESS OF 1ST EXTENT IN F1DSCB
+         LA    R10,3               LOAD NMBR OF XTNT ENTRIES IN F1DSCB
+         L     R8,DSNZDTAB         LOAD ADDRESS OF DEVICE TABLE
+DSNL2200 LH    R14,2(,R1)          LOAD START CC
+         MH    R14,DVCTRK-DVCT(,R8) MULTIPLY BY TRACKS/CYL
+         AH    R14,4(,R1)          ADD START HH
+         LH    R15,6(,R1)          LOAD END CC
+         MH    R15,DVCTRK-DVCT(,R8) MULTIPLY BY TRACKS/CYL
+         AH    R15,8(,R1)          ADD END HH
+         SR    R15,R14             COMPUTE NUMBER OF TRACKS (-1) IN    ?
+                                    EXTENT
+         LA    R9,1(R15,R9)        COMPUUTE NUMBER OF TRKS IN DATA SET
+         LA    R1,10(,R1)          COMPUTE ADDR OF THE NEXT EXTNT ENTRY
+         BCT   R0,DSNL2300         CONTINUE
+         B     DSNL2900            EXIT IF ALL EXTENTS PROCESSED
+DSNL2300 BCT   R10,DSNL2200        CONTINUE LOOP IN F1 DSCB
+         SPACE 1
+* ALL THE EXTENTS DEFINED IN THE FORMAT 1 DSCB ARE DONE, PROCEED TO
+* THE FORMAT 3 DSCBS
+         SPACE 1
+         LA    R7,F2F3-(F2F3NEXT-F2F3DSCB) LOAD ADDR OF THE 1ST F2/F3
+         USING F2F3DSCB,R7
+DSNL2400 L     R7,F2F3NEXT         LOAD ADDR OF NEXT F2/F3
+         LTR   R7,R7               TEST IF END OF CHAIN
+         BZ    DSNL2900            BR IF SO
+         CLI   DS2FMTID,C'3'       TEST IF FORMAT 3
+         BNE   DSNL2400            BR IF NOT
+         LA    R1,DS3EXTNT         LOAD ADDR OF 1ST EXTENT GROUP
+         LA    R10,4               LOAD ENTRIES IN 1ST EXTENT GROUP
+DSNL2500 LH    R14,2(,R1)
+         MH    R14,DVCTRK-DVCT(,R8)
+         AH    R14,4(,R1)
+         LH    R15,6(,R1)
+         MH    R15,DVCTRK-DVCT(,R8)
+         AH    R15,8(,R1)
+         SR    R15,R14
+         LA    R9,1(R15,R9)
+         LA    R1,10(,R1)
+         BCT   R0,DSNL2600
+         B     DSNL2900
+DSNL2600 BCT   R10,DSNL2500
+         LA    R1,DS3ADEXT         LOAD ADDR OF 2ND EXTENT GROUP
+         LA    R10,9               LOAD ENTRIES IN 2ND EXTENT GROUP
+DSNL2700 LH    R14,2(,R1)
+         MH    R14,DVCTRK-DVCT(,R8)
+         AH    R14,4(,R1)
+         LH    R15,6(,R1)
+         MH    R15,DVCTRK-DVCT(,R8)
+         AH    R15,8(,R1)
+         SR    R15,R14
+         LA    R9,1(R15,R9)
+         LA    R1,10(,R1)
+         BCT   R0,DSNL2800
+         B     DSNL2900
+DSNL2800 BCT   R10,DSNL2700
+         B     DSNL2400
+         DROP  R7                  KILL F2F3 AREA ADDRESSABILITY
+DSNL2900 CVD   R9,DWORK1           CONVERT TRACKS ALLOCATED TO
+         MVC   XLINE+55(8),=X'4020202020202120' PRINTABLE DECIMAL  V1L5
+         ED    XLINE+55(8),DWORK1+4                                V1L5
+         MVC   XLINE+65(7),XLINE+56 COPY TRACKS ALLOCATED TO       V1L5>
+                                     TRACKS USED                   V1L5
+         MVC   DWORK1(2),DS1DSORG  COPY DSORG TO WORK AREA
+         NC    DWORK1(2),USELAST   TURN OFF BITS
+         BZ    DSNL3000            BR IF DS1LSTAR IS USELESS
+         TM    DS1SMSFG,DS1PDSE    PDSE?                          V1L12
+         BZ    DSNL2990            NO                             V1L12
+* FOLLOWING CODE, WARTS AND ALL, SORT OF COPIED FROM LDS (CBT FILE 452)
+         LA    0,L'XDSN                                           V1L12
+         STH   0,XDSNLEN                                          V1L12
+         MVC   XDSN,DSNDSNA                                       V1L12
+         MVC   FAMSFMH(8),=CL8'IGWFMH'                            V1L12
+         MVC   FAMSFMH+8(4),=A(FAMSFMHL)                          V1L12
+         MVC   FAMSFMH+12(4),=X'01000000'  VERSION                V1L12
+         MVC   FAMSFMH+16(4),=X'00010068'  GETATTR                V1L12
+         MVC   FAMSFMH+20(4),=X'00000400'                         V1L12
+         LA    0,XDSNLEN                                          V1L12
+         ST    0,FAMSFMH+24                                       V1L12
+         MVC   FAMSFMH+60(4),=X'80000000'                         V1L12
+         MVC   FAMSFMH+116(4),=A(2)                               V1L12
+         LA    R0,FAMSLIST                                        V1L12
+         ST    R0,FAMSFMH+120                                     V1L12
+         MVC   LITS,LIT001         MOVE LITERALS BELOW THE LINE   V1L12
+         LA    0,LITS+HARPN                                       V1L12
+         ST    R0,FAMPTRL1+8                                      V1L12
+         LA    0,LITS+PAGSUSED                                    V1L12
+         ST    0,FAMPTRL2+8                                       V1L12
+         LA    0,LITS+MEMCOUNT                                    V1L12
+         ST    R0,FAMPTRL3+8                                      V1L12
+         LA    R0,FAMPTRL1                                        V1L12
+         ST    R0,FAMSLIST+0                                      V1L12
+         LA    R0,FAMPTRL2                                        V1L12
+         ST    R0,FAMSLIST+4                                      V1L12
+         LA    R0,FAMPTRL3                                        V1L12
+         ST    R0,FAMSLIST+8                                      V1L12
+         MVC   FAMSFMO(8),=CL8'IGWFMO'                            V1L12
+         L     R15,CVTPTR                                         V1L12
+         L     R15,CVTDFA-CVTMAP(,15)                             V1L12
+         CLC   2(2,R15),=X'3200'   TEST FOR DFP 3.2               V1L12
+         BL    DSNL2990            DFP < 3.2 NOT SUPPORTED        V1L12
+         L     R15,DFADFVAD-DFA(,15)  LOAD ADDRESS OF THE VECTOR TABLE
+         L     R15,DFVTFMS-DFVT(,15)  LOAD ADDRESS OF FMS MAIN ENTRY PT
+         LTR   R15,R15                                            V1L12
+         BZ    DSNL2990                                           V1L12
+         LA    R1,FAMSPARM                                        V1L12
+         LA    R0,FAMSFMH                                         V1L12
+         ST    R0,0(,R1)                                          V1L12
+         LA    R0,FAMSFMO                                         V1L12
+         ST    R0,4(,R1)                                          V1L12
+         BASR  R14,R15             WE'RE ALREADY IN AMODE 31,     V1L12>
+                                      DON'T HAVE TO BASSM         V1L12
+         LTR   R15,R15             OK?                            V1L12
+         BNZ   DSNL2990            NO                             V1L12
+* NOW WE REVERT TO STEVE'S CODE                                   V1L12
+* USED TRACKS = (ALLOCATED TRACKS * USED PAGES) / TOTAL PAGES     V1L12
+         L     R15,FAMSFMO+X'64'   LOAD USED PAGES                V1L12
+         SR    14,14                                              V1L12
+         MR    14,R9               USED PAGES * ALLOCATED PAGES   V1L12
+         D     R14,FAMSFMO+X'60'   COMPUTE USED TRACKS            V1L12
+         LTR   R14,R14             ANY REMAINDER?                 V1L12
+         BZ    ++L'*+4             NO                             V1L12
+         LA    R15,1(,R15)         ADD 1 TO USED TRACKS           V1L12
+         LTR   R15,R15             0 TRACKS?                      V1L12
+         BNZ   *+L'*+4             NOT 0 TRACKS                   V1L12
+         LA    R15,1               ALWAYS 1 TRACK                 V1L12
+         CVD   R15,64(,R13)        CONVERT USED TRACKS TO DECIMAL V1L12
+*                           - - - - + - - -                       V1L12
+         MVC   12(8,R13),=X'4020202020202120'  EDIT MASK TO WORK AREA 2
+         ED    12(8,R13),72-4(R13)                                V1L12
+         MVC   XLINE+64(8),12(13)                                 V1L12
+         B     DSNL3100                                           V1L12
+DSNL2990 DC    0H'0'
+         SR    R9,R9               SET R9 = 0
+         ICM   R9,B'0011',DS1LSTAR LOAD TT FROM DS1LSTAR
+         TM    DS1FLAG1,DS1LARGE   TEST IF LARGE FLAG SET          V1L5
+         BZ    *+8                 BR IF NOT                       V1L5
+         ICM   R9,B'0100',DS1TTTHI LOAD LSTAR HIGH ORDER BYTE      V1L5
+         CLI   DS1LSTAR+2,0        TEST IF R IN LSTAR = 0
+         BE    DSNL3000            BR IF SO
+         CLI   DS1LSTAR+2,X'FF'    TEST IF R = X'FF'
+         BE    DSNL3100            BR IF SO
+         LA    R9,1(,R9)           ADD 1 TO TT IN LSTAR
+DSNL3000 CVD   R9,DWORK1           CONVERT TRACKS USED TO DECIMAL
+         MVC   XLINE+64(8),=X'4020202020202120'                    V1L5
+         ED    XLINE+64(8),DWORK1+4                                V1L5
+DSNL3100 L     R1,DSNUCB           LOAD UCB ADDRESS FROM DSN
+         MVC   DVUNIT,UCBTBYT1-UCBOB(R1) COPY UNIT TYPE TO WORK AREA
+         NI    DVUNIT+UCBTBYT2-UCBTBYT1,255-X'20' REMOVE SHARED DASD
+         LINK  SF=(E,CALL4UV),MF=(E,DWORK1), CALL IEFEB4UV TO TRANSLATE?
+               PARAM=(PARM4UV,FLAGS4UV)       DEVTYPE TO DEVICE NAME
+         LTR   R15,R15             TEST RC FROM IEVEB4UV
+         BZ    DSNL3200            BR IF COOL
+         MVC   XLINE+9(8),=CL8' '  CLEAR NAME IN XLINE
+         B     DSNL3300            CONTINUE TO TPUT
+DSNL3200 MVC   XLINE+9(8),UNAME4UV COPY UNIT NAME RETURNED FROM 4UV
+DSNL3300 LA    R0,72               LOAD LINE LENGTH                V1L5
+         LA    R1,XLINE            LOAD START OF LINE
+         L     R15,=A(TPUT)        WRITE THE LINE
+         CALL  (15)
+         LA    R1,=C'--ALLOCATED--LAST USED---EXPIRES--ALTERED-STORCLAS?
+               -DATACLAS-MGMTCLAS'
+         LA    R0,41 ----+----1----+----2----+----3----+----4-
+         TM    DS1SMSFG,DS1SMSDS   TEST IF SMS DATA SET
+         BZ    *+8                 BR IF NOT
+         LA    R0,68 ----+----1----+----2----+----3----+----4----+----5?
+               ----+----6----+---
+         L     R15,=A(TPUT)        CALL TPUT TO WRITE IT
+         CALL  (15)
+         LA    R15,68              LOAD LENGTH
+         LA    R14,XLINE           LOAD START OF XLINE
+         L     R1,=AL1(C' ',0,0,0) LOAD FILL CHARACTER
+         MVCL  R14,R0              CLEAR XLINE
+         LA    R0,XLINE+3          LOAD START OF CREATION DATE IN XLINE
+         LA    R1,DS1CREDT         LOAD START OF CREATION DATE IN DSCB
+         L     R15,=A(CNVTDATE)
+         CALL  (15)
+         LA    R0,XLINE+13         LOAD START OF LAST USED DATE
+         LA    R1,DS1REFD          LOAD START OF LAST USED DATE
+         L     R15,=A(CNVTDATE)
+         CALL  (15)
+         LA    R0,XLINE+25         LOAD START OF EXPIRATION DATE
+         LA    R1,DS1EXPDT
+         L     R15,=A(CNVTDATE)
+         CALL  (15)
+         LA    R1,=C'YES'          LOAD DEFAULT
+         TM    DS1DSIND,DS1IND02   TEST IF CHANGED
+         BO    *+8                 BR IF SO
+         LA    R1,=C' NO'
+         MVC   XLINE+36(3),0(R1)   COPY CODE TO LINE
+         TM    DS1SMSFG,DS1SMSDS   TEST IF SMS MANAGED
+         BZ    NOTSMSX             BR IF NOT
+         MVC   CALLSMS,CALLSMSM    COPY MASTER PARMLIST TO WORK AREA
+         LINK  SF=(E,CALLSMS),     GET SMS STATUS                      ?
+               MF=(E,SMSPARM),                                         ?
+               ERRET=NOTSMSX,                                          ?
+               PARAM=(SMSRC,SMSRESN,SMSPROB,F44,DS1DSNAM,SMSDATA,      ?
+               SMSTYPE),                                               ?
+               VL=1
+         LTR   R15,R15             TEST RETURN CODE FROM SMS
+         BNZ   NOTSMSX             BR IF NON-ZERO
+         TM    SMSSTORC,255-C' '   TEST IF STORAGE CLASS DEFINED
+         BZ    *+10                BR IF NOT
+         MVC   XLINE+42(8),SMSSTORC  COPY FIRST 8 BYTES OF STG CLASS
+         TM    SMSMGMTC,255-C' '   TEST IF MANANGEMENT CLASS DEFINED
+         BZ    *+10                BR IF NOT
+         MVC   XLINE+51(8),SMSMGMTC  COPY FIRST 8 BYTES OF MGMT CLASS
+         TM    SMSDATAC,255-C' '   TEST IF DATA CLASS DEFINED
+         BZ    *+10                BR IF NOT
+         MVC   XLINE+60(8),SMSDATAC  COPY FIRST 8 BYTES OF DATA CLASS
+         LA    R15,XLINE+68        TRUNCATE
+         BCTR  R15,0                TRAILING BLANKS
+         TM    0(R15),255-C' '
+         BZ    *-6
+         LA    R0,1(,R15)
+         LA    R1,XLINE
+         SR    R0,R1
+         BP    ITISSMS
+         DC    H'0'
+NOTSMSX  LA    R0,39               LOAD LENGTH
+         LA    R1,XLINE            WRITE DATA LINE
+ITISSMS  L     R15,=A(TPUT)
+         CALL  (15)
+         SPACE 1
+         LR    R1,R2               COPY DSN AREA ADDRESS TO R1
+         L     R15,=A(EXTENTS)     LOAD ADDR OF EXTENT LIST ROUTINE
+         CALL  (15)                LIST EXTENT INFORMATION
+         SPACE 1
+         LR    R1,R2               COPY DSN AREA ADDRESS TO R1
+         L     R15,=A(LABEL)       LOAD ADDR OF LABEL LIST ROUTINE
+         CALL  (15)                DUMP DATA SET CONTROL BLOCKS
+         SPACE 1
+         LR    R1,R2               COPY DSN AREA ADDRESS TO R1
+         L     R15,=A(DIRLIST)     LOAD ADDR OF DIRLIST ROUTINE
+         CALL  (15)                LIST DIRECTORY DATA
+         SPACE 1
+         B     DSNL9000
+         SPACE 1
+         DROP  R2                  KILL DSN AREA ADDRESSING
+         EJECT
+DSNL8100 LA    R1,=C'TIOT SCAN ERROR' LOAD ADDR OF ERROR MSG
+         LA    R0,15 ----+----1----+  LOAD LEN OF ERROR MSG
+         L     R15,=A(TPUT)           LOAD ADDR OF TPUT ROUTIN
+         CALL  (15)                   WRITE THE MSG
+         B     DSNL9000               CONTINUE WITH NEXT DATA SET
+DSNL8200 LA    R1,=C'OBTAIN ERROR'    LOAD ADDR OF ERROR MSG
+         LA    R0,12 ----+----1--     LOAD LEN OF ERROR MSG
+         L     R15,=A(TPUT)           LOAD ADDR OF TPUT ROUTINE
+         CALL  (15)                   WRITE THE MSG
+         B     DSNL9000               CONTINUE WITH NEXT DATA SET
+         EJECT
+         CNOP  0,8
+DSNL9000 L     R3,F2F3             LOAD ADDR OF FIRST F2/F3 DSCB BLOCK
+DSNL9100 LTR   R4,R3               COPY ADDR TO R4, TEST IF END
+         BZ    DSNL9200            BR IF END OF F2/F3 CHAIN
+         L     R3,F2F3NEXT-F2F3DSCB(,R3) LOAD ADDR OF NEXT F2F3 BLK
+*        WTO   'FREEING F2F3 BLOCK'
+         LA    R0,F2F3LEN          LOAD LENGTH OF F2F3 BLK
+         FREEMAIN R,LV=(0),A=(R4)  RELEASE PREVIOUS F2F3 BLK
+         B     DSNL9100            CONTINUE
+DSNL9200 DC    0H'0'
+         B     DSNL1100
+         EJECT
+PARSERR  LA    R1,=C'IKJPARS ERROR' LOAD ADDR OF ERROR MSG
+         LA    R0,13 ----+----1---  LOAD LEN OF ERROR MSG
+         L     R15,=A(TPUT)         LOAD ADDR OF TPUT ROUTINE
+         CALL  (15)                 WRITE THE MSG
+         B     EXIT0000
+         EJECT
+EXIT0000 DC    0H'0'
+*        WTO   'RELEASING DATA SETS'
+XIT0100  L     R3,DSNLIST          LOAD ADDR OF THE FIRST DSN ENTRY
+XIT0200  LTR   R4,R3               COPY ADDR TO R4 AND TEST IF END
+         BZ    XIT0300             BR IF SO
+         L     R3,DSNNEXT-DSN(,R3) LOAD ADDR OF THE NEXT
+         L     R1,=A(DYNFREE)      LOAD ADDR OF DYNALLOC FREE PARMS
+         MVC   XALLOC(DYNFRLEN),0(R1) COPY FREE PARMS TO WORK AREA
+         L     R15,=A(DYNRELOC)    LOAD ADDR OF DYNRELOC ROUTINE
+         LA    R1,XALLOC           LOAD START OF DYNALLOC PARMS
+         CALL  (15)                RELOCATE THE ADDRESS CONSTANTS
+         MVC   DYNFRDDN-DYNFREE(,R1),DSNDDN-DSN(R4) COPY DDNAME TO PARM
+         DYNALLOC ,                FREE THE ALLOCATION
+*        WTO   'FREEING DSN BLOCK'
+         LA    R0,DSNLEN           LOAD LENGTH OF THE DSN
+         FREEMAIN R,LV=(0),A=(R4)  RELEASE THE DSN DEFINITION BLK
+         B     XIT0200             CONTINUE
+XIT0300  DC    0H'0'
+*        WTO   'RELEASING LOADED UTILITIES'
+         DELETE EPLOC=IKJEFF02     RELEASE IKJEFF02
+         DELETE EPLOC=IKJPUTL      RELEASE IKJPUTL
+*        WTO   'FREEING WORK AREA'
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         LA    R0,WORKL            LOAD LENGTH OF THE WORK AREA
+         FREEMAIN R,LV=(0),A=(R11) FREE THE WORK AREA
+*        WTO   'RETURNING TO CALLER'
+         RETURN (14,12),T,RC=0     RETURN TO CALLER
+         EJECT
+CALLPARS LINK  SF=L,EP=IKJPARS
+CALLDF   LINK  SF=L,EP=IKJEFF18
+CALL4UV  LINK  SF=L,EP=IEFEB4UV
+CALLSMSM LINK  SF=L,EPLOC=IGWASMS,ERRET=NOTSMSX
+IGWASMS  DC    CL8'IGWASMS'
+F44      DC    A(L'DS1DSNAM)
+IKJEFF02 DC    CL8'IKJEFF02'
+IKJPUTL  DC    CL8'IKJPUTL'
+MASTBUF  DC    AL2(5,1),C'Z'
+MASTBUFL EQU   *-MASTBUF
+FLAGS4UV DC    B'0010000100000000'
+CAMLST1  CAMLST SEARCH,DS1DSNAM-MAINWORK,                              ?
+               *-*,DS1FMTID-MAINWORK
+CAMLST1L EQU   *-CAMLST1
+CAMLST2  CAMLST SEEK,*-*,                                              ?
+               *-*,*-*
+CAMLST2L EQU   *-CAMLST2
+RECFMTB  DC    AL1(DCBRECL,DCBRECF,C'F')
+         DC    AL1(DCBRECL,DCBRECV,C'V')
+         DC    AL1(DCBRECL,DCBRECU,C'U')
+         DC    AL1(DCBRECL,0,C'?')
+         DC    AL1(DCBRECBR,DCBRECBR,C'B')
+         DC    AL1(DCBRECSB,DCBRECSB,C'S')
+         DC    AL1(DCBRECTO,DCBRECTO,C'T')
+         DC    AL1(DCBRECCC,DCBRECCA,C'A')
+RECFMTBE DC    AL1(DCBRECCC,DCBRECCM,C'M')
+DSORGTB  DC    AL1(DS1DSGPS,0),CL3'PS '
+         DC    AL1(DS1DSGPS+DS1DSGU,0),CL3'PSU'
+         DC    AL1(DS1DSGPO,0),CL3'PO '
+         DC    AL1(DS1DSGPO+DS1DSGU,0),CL3'POU'
+         DC    AL1(DS1DSGDA,0),CL3'DA '
+         DC    AL1(DS1DSGDA+DS1DSGU,0),CL3'DAU'
+         DC    AL1(DS1DSGIS,0),CL3'IS '
+         DC    AL1(DS1DSGIS+DS1DSGU,0),CL3'ISU'
+DSORGTBE DC    AL1(0,DS1ACBM),CL3'AM '
+         DC    AL1(0,0),CL3'??'
+USELAST  DC    AL1(DS1DSGPS+DS1DSGPO,0)
+         DC    0D'0'
+HEXTAB   EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+         LTORG ,
+HARPN    EQU   0,8                                                V1L12
+LIT001   DC    CL8'HARPN'                                         V1L12
+PAGSUSED EQU   8,8                                                V1L12
+         DC    CL8'PAGSUSED'                                      V1L12
+MEMCOUNT EQU   16,8                                               V1L12
+         DC    CL8'MEMCOUNT'                                      V1L12
+FAMSLITS EQU   LIT001,*-LIT001                                    V1L12
+         DROP  R12
+         EJECT
+         CNOP  0,8
+TPUT     SAVE  (14,5),,*           SAVE CALLER'S REGISTERS
+         BALR  R3,0                STORE CURRENT ADDRESS IN R2
+         USING *,R3                ESTABLISH LOCAL ADDRESSABILITY
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA
+         ST    R15,8(,R13)         ADD NEW SAVE AREA TO
+         ST    R13,4(,R15)          TO THE SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+*        LR    R4,R0
+*        LR    R5,R1
+*        WTO   'IN TPUT'
+*        LR    R0,R4
+*        LR    R1,R5
+*        TPUT  (1),(0),R           WRITE MSG FROM CALLER
+         LA    R15,L'XLINE
+         CR    R15,R0
+         BNL   *+6
+         DC    H'0'
+         AGO   .USEPUTL
+         ST    R1,MTADDR-1         STORE MESSAGE ADDRESS
+         STC   R0,MTLEN            STORE MESSAGE LENGTH
+         MVC   MTMSGID,=C'DATA'    COPY MSGID
+         MVI   MTSW1,MTNOIDSW+MTPUTLSW SET FLAGS
+*        LINK  SF=(E,CALLFF02),    LINK TO MSG ROUTINE                 ?
+               MF=(E,MTPARML)
+         L     R15,FF02PTR         LOAD ADDRESS OF IKJEFF02
+         CALL  (15),MF=(E,MTPARML) EXECUTE IT
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN (14,5),T           RESTORE REGS AND RETURN TO CALLER
+         DC    0D'0'
+CALLFF02 LINK  SF=L,EPLOC=IKJEFF02
+         AGO   .CONT
+.USEPUTL ANOP
+         LA    R14,XLINE           LOAD ADDR OF THE BUILD AREA
+         CR    R14,R1              TEST IF MESSAGE IN BUILD AREA
+         BE    TPUTXLINE           BR IF SO
+         LR    R15,R0              COPY LENGTH TO R15
+         LR    R0,R1               COPY ADDRESS TO R0
+         LR    R1,R15              COPY LENGTH TO R1
+         MVCL  R14,R0              COPY MESSAGE TO BUILD AREA
+         LA    R1,XLINE            LOAD ADDR OF BUILD AREA
+         SR    R14,R1              COMPUTE MESSAGE LENGTH
+         LR    R0,R14              COPY MESSAGE LENGTH TO R0
+TPUTXLINE LA   R15,4               SET R15 = LENGTH OF AN RDW
+         AR    R0,R15              COMPUTE VARIABLE LENGTH
+         SR    R1,R15              COMPUTE VARIABLE START
+         STH   R0,0(,R1)           STORE LENGTH IN RDW
+         XC    2(2,R1),2(R1)       CLEAR REMAIDER OF THE RDW
+         LR    R2,R1               COPY MESSAGE ADDR TO R2
+         MVC   MYPUTL(MYPUTLL),MASTPUTL  COPY MASTER PARM LIST TO      >
+                                          WORK AREA
+         PUTLINE MF=(E,MYIOPL),    USE PUTLINE TO WRITE THE LINE       >
+               PARM=MYPUTL,                                            >
+               OUTPUT=((R2),TERM,SINGLE,DATA),                         >
+               ENTRY=TPUTPUTL
+TPUTPUTL L     R15,PUTLADDR        LOAD ADDR OF IKJPUTL
+         CALL  (15)                CALL IKJPUTL
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN (14,5),T           RESTORE REGS AND RETURN TO CALLER
+         DC    0D'0'
+MASTPUTL PUTLINE MF=L,                                                 >
+               OUTPUT=(*-*)
+.CONT    DC    0D'0'
+         LTORG ,
+         DROP  R3
+         EJECT
+         CNOP  0,8
+DYNRELOC SAVE  (14,2),,*           SAVE CALLER'S REGISTERS
+         BALR  R2,0                STORE CURRENT ADDRESS IN R2
+         USING *,R2                ESTABLISH LOCAL ADDRESSABILITY
+         LR    R0,R1               COPY R0 TO R1
+         N     R0,=X'7FFFFFFF'     TURN OFF HIGH ORDER BIT IN R0
+         L     R15,0(,R1)          LOAD OFFSET OF THE RB
+         ALR   R15,R0              COMPUTE RB ADDRESS
+         ST    R15,0(,R1)          STORE RB ADDRESS
+         USING S99RB,R15           ESTABLISH RB ADDRESSABILITY
+         L     R1,S99TXTPP         LOAD OFFSETS OF THE TEXT UNIT       ?
+                                    POINTER LIST
+         ALR   R1,R0               COMPUTE ADDRESS
+         ST    R1,S99TXTPP         STORE ADDRESS
+         DROP  R15
+DYNREL10 L     R15,0(,R1)          LOAD TEXT UNIT OFFSET
+         LR    R14,R15             COPY OFFSET TO R14
+         N     R14,=X'7FFFFFFF'    TURN OFF HIGH ORDER BIT (IF ANY)
+         BZ    DYNREL20            BR IF OFFSET 0
+         ALR   R15,R0              COMPUTE TEXT UNIT ADDRESS
+         ST    R15,0(,R1)          STORE TEXT UNIT ADDRESS
+DYNREL20 TM    0(R1),X'80'         TEST IF END OF THE TEXT UNIT POINTER
+         LA    R1,4(,R1)           COMPUTE ADDR OF THE NEXT T.U. ADDR
+         BZ    DYNREL10            BR IF NOT THE END OF THE T.U. ADDRS
+         RETURN (14,2),T           DONE, RESTORE REGS AND RETURN
+         DC    0D'0'
+         LTORG ,
+         DROP  R2
+         EJECT
+         CNOP  0,8
+OFFYR    EQU   6                   OUTPUT OFFSET OF THE YEAR (U.S.)
+OFFMON   EQU   0                   OUTPUT OFFSET OF THE MONTH (U.S.)
+OFFDAY   EQU   3                   OUTPUT OFFSET OF THE DAY OF MONTH
+CNVTDATE SAVE  (14,4),,*           SAVE REGISTERS
+         BALR  R4,0                STORE CURRENT ADDRESS IN R4
+         USING *,R4                ESTABLISH LOCAL ADDRESSABILITY
+         LR    R2,R0               COPY OUTPUT AREA TO R2
+         LR    R3,R1               COPY INPUT AREA TO R3
+         OC    0(3,R3),0(R3)       TEST IF INPUT IS ALL 0'S
+         BNZ   CVD0100             BR IF SO
+         MVC   0(8,R2),=CL8' ------ ' INDICATE NULL DATA
+         B     CVD0300             AND GO EXIT
+CVD0100  MVC   0(8,R2),=C'  /  /  ' PRIME THE OUTPUT AREA
+         SR    R1,R1               SET R1 = 0
+         IC    R1,0(,R3)           LOAD YEAR
+         SR    R15,R15             SET R15 = 0
+         ICM   R15,B'0011',1(R3)   LOAD DAY OF YEAR
+         CVD   R1,DWORK1           CONVERT YEAR TO
+         OI    DWORK1+7,X'0F'       PRINTABLE DECIMAL
+         UNPK  OFFYR(2,R2),DWORK1    SIGITS
+         SR    R0,R0               SET R0 = 0
+         D     R0,=F'4'            DIVIDE YEAR BY 4
+         LTR   R0,R0               TEST IF REMAINDER = 0
+         BZ    CVD0200             BR IF SO -- IT'S A LEAP YEAR
+         C     R15,=A(31+28)       COMPARE DAY OF YEAR WITH DAY        ?
+                                    OF YEAR FOR FEBRUARY 28
+         BNH   CVD0200             BR IF DAY OF YEAR IS OK
+         LA    R15,1(,R15)         ADD 1 TO DAY OF YEAR
+CVD0200  SR    R14,R14             SET R14 = 0
+         IC    R14,CVDMON(R15)     LOAD MONTH IN WHICH CURRENT DAY OF  ?
+                                    YEAR IS LOCATED
+         CVD   R14,DWORK1          CONVERT MONTH NUMBER TO
+         OI    DWORK1+7,X'0F'       PRINATBLE DECIMAL
+         UNPK  OFFMON(2,R2),DWORK1
+         SLL   R14,1               MULTIPLY MONTH BY 2
+         SH    R15,CVDDAY-2(R14)   SUBTRACT FIRST DAY OF MONTH FROM    ?
+                                    DAY OF YEAR
+         CVD   R15,DWORK1          CONVERT DAY TO
+         OI    DWORK1+7,X'0F'       PRINATBLE DECIMAL
+         UNPK  OFFDAY(2,R2),DWORK1
+CVD0300  RETURN (14,4),T           RETURN TO CALLER
+         SPACE 2
+         DC    0D'0'
+         LTORG  ,
+CVDDAY   DC    AL2(0)                                JAN
+         DC    AL2(31)                               FEB
+         DC    AL2(31+29)                            MAR
+         DC    AL2(31+29+31)                         APR
+         DC    AL2(31+29+31+30)                      MAY
+         DC    AL2(31+29+31+30+31)                   JUN
+         DC    AL2(31+29+31+30+31+30)                JUL
+         DC    AL2(31+29+31+30+31+30+31)             AUG
+         DC    AL2(31+29+31+30+31+30+31+31)          SEP
+         DC    AL2(31+29+31+30+31+30+31+31+30)       OCT
+         DC    AL2(31+29+31+30+31+30+31+31+30+31)    NOV
+         DC    AL2(31+29+31+30+31+30+31+31+30+31+30) DEC
+         SPACE 1
+CVDMON   DC    32AL1(1),29AL1(2),31AL1(3),30AL1(4),31AL1(5),30AL1(6)
+         DC    31AL1(7),31AL1(8),30AL1(9),31AL1(10),30AL1(11),32AL1(12)
+         SPACE 1
+         DROP  R4
+         EJECT
+         CNOP  0,8
+LISTMEMB SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         BALR  R12,0               STORE CURRENT ADDRESS IN R12
+         USING *,R12               ESTABLISH LOCAL ADDRESSABILITY
+         LA    R15,72(,R13)        LOAD NEXT SAVE AREA ADDRESS
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO CALLER'S
+         ST    R15,8(,R13)          SAVE AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA
+         LR    R2,R1               COPY DSN POINTER TO R2
+         USING DSN,R2              ESTABLISG ADDRESSABILITY
+         MVC   DWORK1(L'DSNDSORG),DSNDSORG COPY DSORG FROM DYNALLOC
+         NC    DWORK1(2),=AL1(DCBDSGPO,0) TURN OFF
+         BZ    LSM9000             EXIT IF NOT DSORG = PO
+         L     R3,DSNPDE           LOAD ADDRESS OF THE PDE
+         TM    8+6(R3),X'80'       TEST IF MEMBER NAME SPECIFIED
+         BZ    LSM9000             BR IF NOT
+         MVC   DCBAREA(LSMDCBL),LSMDCB COPY EXCP DCB TO THE WORK AREA
+         MVC   DCBDDNAM-IHADCB+DCBAREA,DSNDDN COPY DDNAME TO DCB
+         MVC   OPENAREA(LSMOPENL),LSMOPEN COPY MASTER OPEN PARM LIST
+         L     15,=A(DILXLST)                                     V1L11
+         MVC   UDAAREA,0(15)                                      V1L11
+         LA    0,UDAAREA                                          V1L11
+         STCM  0,B'0111',(DCBEXLST-IHADCB)+1+DCBAREA              V1L11
+         LA    0,(UDA-DILXLST)+UDAAREA                            V1L11
+         STCM  0,B'0111',UDAAREA+1                                V1L11
+         OPEN  (DCBAREA),MF=(E,OPENAREA) OPEN THE DATA SET
+         TM    DCBOFLGS-IHADCB+DCBAREA,DCBOFOPN TEST IF DCB IS OPEN
+         BZ    LSM9000             BR IF NOT - IGNORE (FOR THE PRESENT)
+         LA    R14,BLDLENT+PDS2NAME-PDS2 LOAD START OF MEMBER NAME
+         LA    R15,L'PDS2NAME      LOAD LENGTH OF MEMBER NAME
+         L     R0,8(,R3)           LOAD ADDRESS OF MEMBER NAME IN DSN
+         LH    R1,8+4(,R3)         LOAD LENGTH OF MEMBER NAME IN DSN
+         O     R1,=AL1(C' ',0,0,0) LOAD FILL CHARACTER
+         MVCL  R14,R0              COPY MEMBER NAME TO BLDL PARMS
+         MVC   XLINE(2),=CL8' '    COPY MEMBER NAME TO XLINE       V1L7
+         MVC   XLINE+2(8),BLDLENT+PDS2NAME-PDS2                    V1L7
+         MVC   BLDLAREA(4),=AL2(1,L'BLDLENT) COPY BLDL PREFIX
+         BLDL  DCBAREA,BLDLAREA    RETRIEVE MEMBER STATUS
+         LTR   R15,R15             TEST RC FROM BLDL
+         BZ    LSM0100             BR IF MEMBER FOUND
+*                               ----+----1----+----2----           V1L7
+         MVC   XLINE+2+8(24),=C'  ** MEMBER NOT FOUND **'          V1L7
+         LA    R0,2+8+24           LOAD LENGTH                     V1L7
+         LA    R1,XLINE            LOAD START OF DATA              V1L7
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT ROUTINE
+         CALL  (15)                WRITE THE MESSAGE
+         B     LSM8000             GO CLOSE THE DCB
+LSM0100  LA    R1,=C'---MEMBER-----TTRC------USER DATA--(TTRC AND USER >
+               DATA ARE IN HEX)--' LOAD ADDR OF REGULAR TEXT       V1L7
+         LA    R0,68               LOAD LENGTH OF REGULAR TEXT     V1L7
+         IC    R15,PDS2INDC-PDS2+BLDLENT  LOAD INDC                V1L7
+         N     R15,=A(PDS2NTTR+PDS2LUSR)  ISOLATE NTTR AND LUSR    V1L7
+         CLM   R15,B'0001',=AL1(SPFLEN/2)  TEST IF SPF USER DATA   V1L7
+         BNE   LSM0110             BR IF NOT                       V1L7
+         LA    R1,=C'---MEMBER---SIZE--INIT---MOD--CREATED------CHANGED>
+               ------VV MM---ID----'  LOAD ADDR OF SPF TEXT        V1L7
+         LA    R0,70               LOAD THE LENGTH                 V1L7
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT               V1L7
+         CALL  (15)                WRITE THE LINE                  V1L7
+         MVI   XLINE,C' '          SET ALL OF                      V1L7
+         MVC   XLINE+1(69),XLINE    XLINE TO BLANKS                V1L7
+         MVC   XLINE+2(8),PDS2NAME-PDS2+BLDLENT  COPY THE MEMBR NM V1L7
+         SR    R15,R15             SET REG 15 = 0                  V1L7
+         IC    R15,SPFVER-PDS2+BLDLENT  LOAD VERSION               V1L7
+         CVD   R15,16(,R13)        CONVERT TO DECIMAL              V1L7
+         OI    16+7(R13),X'0F'     AND THEN TO                     V1L7
+         UNPK  XSPFVER(2),16(8,R13) DECIMAL                        V1L7
+         IC    R15,SPFMOD-PDS2+BLDLENT  LOAD LEVEL                 V1L7
+         CVD   R15,16(,R13)        CONVERT TO DECIMAL              V1L7
+         OI    16+7(R13),X'0F'     AND THEN TO                     V1L7
+         UNPK  XSPFLVL(2),16(8,R13) DECIMAL                        V1L7
+         MVI   XSPFVER+L'XSPFVER,C':'  ADD SEPARATOR               V1L7
+         LA    R0,XSPFCRTD         LOAD ADDR OF XLINE DATE         V1L7
+         LA    R1,SPFCREAT-PDS2+BLDLENT  LOAD ADDR OF DIRECTORY    V1L7>
+                                          CREATION DATE            V1L7
+         BAL   R14,LSMDATE         CONVERT CREATION DATE           V1L7
+         LA    R0,XSPFMODD         LOAD ADDR OF XLINE DATE         V1L7
+         LA    R1,SPFMODD-PDS2+BLDLENT  LOAD ADDR OF DIRECTORY     V1L7>
+                                         MODIFICATION DATE         V1L7
+         BAL   R14,LSMDATE         CONVERT MOD DATE                V1L7
+         MVC   XSPFSIZE,=X'402020202120' COPY EDIT                 V1L7
+         MVC   XSPFINIT,=X'402020202120'  MASKS TO THE             V1L7
+         MVC   XSPFMOD,=X'402020202120'    OUTPUT LINE             V1L7
+         SR    R15,R15             SET REG 15 = 0                  V1L7
+         ICM   R15,B'0011',SPFSIZE-PDS2+BLDLENT  LOAD CURRENT SIZE V1L7
+         CVD   R15,16(,R13)                                        V1L7
+         ED    XSPFSIZE,16+5(R13)                                  V1L7
+         ICM   R15,B'0011',SPFINIT-PDS2+BLDLENT  LOAD INITIAL SIZE V1L7
+         CVD   R15,16(,R13)                                        V1L7
+         ED    XSPFINIT,16+5(R13)                                  V1L7
+         ICM   R15,B'0011',SPFMODR-PDS2+BLDLENT  LOAD CHANGED RECS V1L7
+         CVD   R15,16(,R13)                                        V1L7
+         ED    XSPFMOD,16+5(R13)                                   V1L7
+         UNPK  XSPFMODT(3),SPFMODT-PDS2+BLDLENT(2)     CONVERT     V1L7
+         TR    XSPFMODT(2),LSMXTAB                      LAST       V1L7
+         UNPK  XSPFMODT+3(3),SPFMODT-PDS2+BLDLENT+1(2)   MODIFIED  V1L7
+         TR    XSPFMODT+3(2),LSMXTAB                      TIME     V1L7
+         UNPK  XSPFMODT+6(3),SPFMODSS-PDS2+BLDLENT(2)      TO      V1L7
+         TR    XSPFMODT+6(2),LSMXTAB                        DIGITS V1L7
+         MVI   XSPFMODT+2,C':'                                     V1L7
+         MVI   XSPFMODT+5,C':'                                     V1L7
+         MVI   XSPFMODT+8,C' '                                     V1L7
+         MVC   XSPFID,SPFUSER-PDS2+BLDLENT  COPY USERID TO LINE    V1L7
+         LA    R0,70               LOAD LENGTH                     V1L7
+         LA    R1,XLINE            LOAD START                      V1L7
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT               V1L7
+         CALL  (15)                WRITE THE LINE                  V1L7
+         B     LSM8000             AND EXIT                        V1L7
+LSM0110  L     R15,=A(TPUT)        LOAD ADDR OF TPUT               V1L7
+         CALL  (15)                WRITE THE LINE                  V1L7
+         MVC   XLINE(2),=CL8' '                 COPY MEMBER NAME   V1L7
+         MVC   XLINE+2(8),PDS2NAME-PDS2+BLDLENT  TO OUTPUT         V1L7
+         MVC   XLINE+2+8(2),=CL8' '  BUILD TTRC IN OUTPUT LINE     V1L7
+         UNPK  XLINE+2+8+2(7),PDS2TTRP-PDS2+BLDLENT(4)             V1L7
+         UNPK  XLINE+2+8+2+6(3),PDS2INDC-PDS2+BLDLENT(2)           V1L7
+         TR    XLINE+2+8+2(8),LSMXTAB                              V1L7
+         LA    R4,XLINE            LOAD START OF XLINE
+         A     R4,MAXLINE          COMPUTE END OF THE LINE
+         LA    R3,XLINE+2+8+2+8    SET REG 3 = END OF TTRC         V1L7
+         LA    R5,PDS2USRD-PDS2+BLDLENT LOAD START OF USER DATA
+         IC    R6,PDS2INDC-PDS2+BLDLENT LOAD INDC
+         N     R6,=A(PDS2LUSR)     STRIP OUT EXTRA BITS
+         BZ    LSM0600             BR IF NO USER DATA
+         LA    R3,XLINE+2+8+2+9    SET REG 3 = START OF USER DATA  V1L7
+         MVI   XLINE+2+8+2+8,C' '                                  V1L7
+         AR    R6,R6               MULTIPLY R6 BY 2
+LSM0200  C     R6,=F'5'            COMPARE REMAINING LENGTH WITH 5
+         BNH   LSM0400             BR IF 5 BYTES OR LESS
+         LA    R0,11(,R3)          COMPUTE END OF CURRENT BLOCK
+         CR    R0,R4               COMPARE TRIAL END WITH END OF LINE
+         BNH   LSM0300             BR IF NEW BLOCK FITS ON LINE
+         LR    R0,R3               COPY CURRENT OUTPUT TO R0
+         LA    R1,XLINE            LOAD START
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT
+         CALL  (15)                WRITE THE LINE
+         LA    R14,XLINE           LOAD START OF XLINE
+         LA    R15,30              SET R15 = 30                    V1L7
+         L     R1,=AL1(C' ',0,0,0) SET R1 WITH FILL CHARACTER
+         MVCL  R14,R0              CLEAR FIRST 20 BYTES OF XLINE
+         LA    R3,XLINE+2+8+2+9    SET REG 3 = START OF USER DATA  V1L7
+LSM0300  MVI   0(R3),C' '          CLEAR HEADER
+         UNPK  1(11,R3),0(6,R5)    TRANSLATE 5 BYTES OF USER DATA TO
+         TR    1(10,R3),LSMXTAB     10 BYTES OF HEXADECIMAL
+         LA    R3,11(,R3)          COMPUTE NEXT OUTPUT AREA
+         LA    R5,5(,R5)           COMPUTE NEXT INPUT AREA
+         S     R6,=F'5'            REDUCE REMAINING LNEGTH
+         B     LSM0200             CONTINUE
+LSM0400  LA    R1,1(R6,R6)         COMPUTE GENERATED BYTES FOR LAST    ?
+                                    OUTPUT BLOCK
+         AR    R1,R3               COMPUTE TRIAL END OF OUTPUT BLOCK
+         CR    R1,R4               COMPARE TRIAL END WITH END OF LINE
+         BNH   LSM0500             BR IF NEW BLOCK FITS ON LINE
+         LR    R0,R3               COPY CURRENT OUTPUT TO R0
+         LA    R1,XLINE            LOAD START
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT
+         CALL  (15)                WRITE THE LINE
+         LA    R14,XLINE           LOAD START OF XLINE
+         LA    R15,30              SET R15 = 30                    V1L7
+         L     R1,=AL1(C' ',0,0,0) SET R1 WITH FILL CHARACTER
+         MVCL  R14,R0              CLEAR FIRST 20 BYTES OF XLINE
+         LA    R3,XLINE+2+8+2+9    SET REG 3 = START OF USER DATA  V1L7
+LSM0500  MVI   0(R3),C' '          CLEAR HEADER
+         LR    R14,R6              COPY REMAINING LENGTH TO R14
+         LR    R15,R6               AND TO R15
+         SLL   R14,5               CONVERT B'00000LLL' TO B'LLL0000'
+         OR    R14,R15             ADD OUTPUT SIZE AND INPUT SIZE
+         EX    R14,LSMUNPK         TRANSLATE 1 TO 5 INPUT BYTES
+         SRL   R14,4                TO 2 TO 10
+         EX    R14,LSMTR             OUTPUT BYTES
+         LA    R3,1(R14,R3)        COMPUTE NEXT OUTPUT AREA
+LSM0600  LR    R0,R3               COPY END OF LINE TO R0
+         LA    R1,XLINE            LOAD START OF OUTPUT LINE
+         SR    R0,R1               COMPUTE DATA LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT
+         CALL  (15)                WRITE THE LINE
+LSM8000  CLOSE MF=(E,OPENAREA)     CLOSE THE DATASET
+LSM9000  L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S SAVE AREA
+         RETURN (14,12),T          RETURN TO CALLER
+         EJECT                                                     V1L7
+         CNOP  6,8                                                 V1L7
+LSMDATE  BASR  R15,0               STORE CURRENT ADDR IN REG 15    V1L7
+         SAVE  (14,12),,LSMDATE    SAVE REGS                       V1L7
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA V1L7
+         ST    R13,4(,R15)         ADD NEW SAVE AREA               V1L7
+         ST    R15,8(,R13)          TO THE SAVE AREA CHAIN         V1L7
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER V1L7
+         LR    R2,R0               COPY OUTPUT ADDR TO REG 2       V1L7
+         LR    R3,R1               COPY INPUT ADDR TO REG 3        V1L7
+         MVC   0(6,R2),=C'  /  /'  PRIME THE OUTPUT AREA           V1L7
+         ZAP   16(8,R13),0(4,R3)   EXPAND INPUT TO 8 BYTES         V1L7
+         CVB   R15,16(,R13)        CONVERT INPUT TO BINARY         V1L7
+         SR    R14,R14             SET REG 14 = 0                  V1L7
+         D     R14,=F'1000'        SEPARATE DAY OF YEAR FROM YEAR  V1L7
+         LR    R7,R14              COPY DAY OF YEAR TO REG 7       V1L7
+         A     R15,=F'1900'        ADD 1900 TO YEAR                V1L7
+         SR    R14,R14             SET REG 14 = 0                  V1L7
+         D     R14,=F'100'         DIVIDE YEAR BY 100              V1L7
+         LTR   R6,R14              COPY YEAR IN CENTURY TO REG 6   V1L7
+         BNZ   LSMD0100            BR IF NOT A CENTURY YEAR        V1L7
+* CENTURY YEAR                                                     V1L7
+         D     R14,=F'4'           DIVIDE YEAR/100 BY 4            V1L7
+         LTR   R14,R14             TEST IF LEAP YEAR               V1L7
+         BNZ   LSMD0200            BR IF NON-LEAP YEAR IN CENTURY  V1L7
+         B     LSMD0300            BR IF LEAP YEAR IN CENTURY      V1L7
+LSMD0100 LR    R5,R6               COPY YEAR IN CENTURY TO REG 5   V1L7
+         SR    R4,R4               SET REG 4 = 0                   V1L7
+         D     R4,=F'4'            DIVIDE YEAR IN CENTURY BY 4     V1L7
+         LTR   R4,R4               TEST REMAINDER                  V1L7
+         BZ    LSMD0300            BR IF LEAP YEAR                 V1L7
+* IT'S NOT A LEAP YEAR                                             V1L7
+LSMD0200 C     R7,=A(31+28)        COMPARE DAY OF YEAR WITH DAYS   V1L7>
+                                    IN JANUARY AND FEBRUARY        V1L7
+         BNH   LSMD0300            BR IF JANUARY OR FEBRUARY       V1L7
+         LA    R7,1(,R7)           PRETEND IT'S A DAY OF YEAR      V1L7>
+                                    IN A LEAP YEAR                 V1L7
+LSMD0300 SR    R15,R15             SET REG 15 = 0                  V1L7
+         IC    R15,LSMDD(R7)       LOAD MONTH IN YEAR              V1L7
+         CVD   R15,16(,R13)        CONVERT MONTH TO                V1L7
+         OI    16+7(R13),X'0F'      DECIMAL                        V1L7
+         UNPK  3(2,R2),16(8,R13)     DIGITS                        V1L7
+         AR    R15,R15             MULTIPLE MONTH BY 2             V1L7
+         SH    R7,LSMDM(R15)       SUBTRACT DAY OF YEAR FOR 1ST    V1L7>
+                                    DAY OF MONTH FROM DAY OF YEAR  V1L7
+         CVD   R7,16(,R13)         CONVERT DAY OF MONTH TO         V1L7
+         OI    16+7(R13),X'0F'      DECIMAL                        V1L7
+         UNPK  6(2,R2),16(8,R13)     DIGITS                        V1L7
+         CVD   R6,16(,R13)         CONVERT YEAR IN CENTURY TO      V1L7
+         OI    16+7(R13),X'0F'      DECIMAL                        V1L7
+         UNPK  0(2,R2),16(8,R13)     DIGITS                        V1L7
+         L     R13,4(,R13)         LOAD ADDR OF THE CALLER'S       V1L7>
+                                    SAVE AREA                      V1L7
+         RETURN (14,12),T          RESTORE REGS & RETURN           V1L7
+         SPACE 1
+LSMUNPK  UNPK  1(*-*,R3),0(*-*,R5)
+LSMTR    TR    1(*-*,R3),LSMXTAB
+         SPACE 1
+         DROP  R2,R12              KILL DSN AND LOCAL ADDRESSABILITY
+         SPACE 1
+LSMOPEN  OPEN  (*-*,INPUT),MF=L
+LSMOPENL EQU   *-LSMOPEN
+         SPACE 1
+         PUSH  PRINT
+         PRINT NOGEN
+LSMDCB   DCB   MACRF=R,DDNAME=FILLMEIN,DSORG=PO                   V1L11
+LSMDCBL  EQU   *-LSMDCB
+         POP   PRINT
+         DC    0D'0'
+LSMXTAB  EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+LSMDD    DC    32AL1(1),29AL1(2),31AL1(3),30AL1(4)                 V1L7
+         DC    31AL1(5),30AL1(6),31AL1(7),31AL1(8)                 V1L7
+         DC    30AL1(9),31AL1(10),30AL1(11),31AL1(12)              V1L7
+LSMDM    DC    Y(0,0,31)                     JAN & FEB             V1L7
+         DC    Y(31+29)                            MAR             V1L7
+         DC    Y(31+29+31)                         APR             V1L7
+         DC    Y(31+29+31+30)                      MAY             V1L7
+         DC    Y(31+29+31+30+31)                   JUN             V1L7
+         DC    Y(31+29+31+30+31+30)                JUL             V1L7
+         DC    Y(31+29+31+30+31+30+31)             AUG             V1L7
+         DC    Y(31+29+31+30+31+30+31+31)          SEP             V1L7
+         DC    Y(31+29+31+30+31+30+31+31+30)       OCT             V1L7
+         DC    Y(31+29+31+30+31+30+31+31+30+31)    NOV             V1L7
+         DC    Y(31+29+31+30+31+30+31+31+30+31+30) DEC             V1L7
+         DC    Y(31+29+31+30+31+30+31+31+30+31+30) DEC             V1L7
+         SPACE 1
+         LTORG ,
+         DC    0D'0'
+         EJECT
+         CNOP  0,8
+EXTENTS  SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         BALR  R12,0               STORE CURRENT ADDRESS IN R12
+         USING *,R12               ESTABLISH LOCAL ADDRESSABILITY
+         LA    R15,72(,R13)        LOAD ADDRESS OF THE NEXT SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO THE SAVE
+         ST    R15,8(,R13)          AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         LR    R9,R1               COPY DSN ADDR TO R2
+         USING DSN,R9              ESTABLISH DSN ADDRESSABILITY
+         L     R1,PDLPTR1          LOAD ADDRESS OF PDL
+         OC    EXTENTKW-MAINPDL(,R1),EXTENTKW-MAINPDL(R1) TEST IF      ?
+                                               EXTENT DISPLAY REQUESTED
+         BZ    EXT9000             BR IF NOT
+         SR    R2,R2               SET R2 = 0
+         IC    R2,DS1NOEPV         LOAD NUMBER OF EXTENTS
+         LTR   R2,R2               TEST IF ANY ALLOCATION
+         BZ    EXT9000             BR IF NULL DATA SET
+         LA    R0,43 ----+----1----+----2----+----3----+----4---   V1L7
+         LA    R1,=C'---NO--RELTRK--START CCHH--END CCHH--TRACKS'  V1L7
+         L     R15,=A(TPUT)
+         CALL  (15)
+         LA    R3,DS1EXT1          LOAD ADDR OF FIRST EXTENT AREA
+         LA    R4,1                LOAD MY EXTENT NUMBER
+         LA    R5,3                LOAD NUMBER OF EXTENTS IN AN F1     ?
+                                    DSCB
+         SR    R7,R7               SET TALLY REG = 0               V1L7
+EXT0100  BAL   R10,EXTLIST         LIST EXTENT
+         BCT   R2,EXT0200          COUNT DOWN
+         B     EXT9000             ALL EXTENTS LISTED
+EXT0200  BCT   R5,EXT0100          GO DO NEXT F1 EXTENT
+         LA    R6,F2F3-(F2F3NEXT-F2F3DSCB)
+EXT0300  L     R6,F2F3NEXT-F2F3DSCB(,R6) LOAD NEXT F2/F3 DSCB
+         LTR   R6,R6               TEST IF END OF CHAIN
+         BZ    EXT9000             BR IF FOUND
+         CLI   DS3FMTID-F2F3DSCB(R6),C'3' TEST IF FORMAT 3 DSCB
+         BNE   EXT0300             BR IF NOT
+         LA    R5,4                LOAD NUMBER OF EXTENTS IN KEY
+         LA    R3,DS3EXTNT-F2F3DSCB(,R6)
+EXT0400  BAL   R10,EXTLIST
+         BCT   R2,EXT0500
+         B     EXT9000
+EXT0500  BCT   R5,EXT0400
+         LA    R5,9                LOAD NUMBER OF EXTENTS IN DATA AREA
+         LA    R3,DS3ADEXT-F2F3DSCB(,R6)
+EXT0600  BAL   R10,EXTLIST
+         BCT   R2,EXT0700
+         B     EXT9000
+EXT0700  BCT   R5,EXT0600
+         B     EXT0300
+EXT9000  L     R13,4(,R13)
+         RETURN (14,12),T,RC=0
+         EJECT
+         CNOP  0,8
+EXTLIST  MVC   XLINE(EXTMASTL),EXTMAST
+         CVD   R4,DWORK1
+         ST    R7,16(,R13)         SAVE TALLY                      V1L7
+         UNPK  20(7,R13),17(4,R13)            CONVERT TALLY        V1L7
+         TR    20(6,R13),EXTXTAB               TO 5 HEX            V1L7
+         MVC   EXTRELTR-EXTMAST+XLINE,21(R13)   DIGITS             V1L7
+         ED    EXTMNO-EXTMAST+XLINE,DWORK1+6
+         LA    R4,1(,R4)
+         UNPK  EXTMS-EXTMAST+XLINE(9),2(5,R3)
+         TR    EXTMS-EXTMAST+XLINE(8),EXTXTAB
+         UNPK  EXTME-EXTMAST+XLINE(9),6(5,R3)
+         TR    EXTME-EXTMAST+XLINE(8),EXTXTAB
+         MVI   EXTMS-EXTMAST+XLINE+L'EXTMS,C' '
+         MVI   EXTME-EXTMAST+XLINE+L'EXTME,C' '
+         LH    R15,6(,R3)          LOAD CC OF END TRACK
+         L     R1,DSNZDTAB         LOAD ADDR OF DEVICE CHARACTERISTICS
+         MH    R15,DVCTRK-DVCT(,R1) CONVERT CC TO RELATIVE TRACK
+         AH    R15,8(,R3)          ADD TT TO RELATIVE TRACK
+         LH    R14,2(,R3)          LOAD CC OF START TRACK
+         L     R1,DSNZDTAB         LOAD ADDR OF DEVICE CHARACTERISTICS
+         MH    R14,DVCTRK-DVCT(,R1) CONVERT CC TO RELATIVE TRACK
+         AH    R14,4(,R3)          ADD TT TO RELATIVE TRACK
+         SR    R15,R14             COMPUTE TRACKS IN EXTENT
+         LA    R15,1(,R15)         ADD 1
+         CVD   R15,DWORK1          CONVERT TRACK COUNT TO DECIMAL
+         ED    EXTMT-EXTMAST+XLINE,DWORK1+4                        V1L7
+         AR    R7,R15              ADD SIZE OF EXTENT TO TALLY     V1L7
+         LA    R3,10(,R3)          BUMP EXTENT ENTRY POINTER
+         LA    R0,EXTMASTL         LOAD OUTPUT LENGTH
+         LA    R1,XLINE            LOAD ADDRESS
+         L     R15,=A(TPUT)        LOAD ADDRESS OF TPUT
+         CALL  (15)                WRITE THE DATA
+         BR    R10                 RETURN TO CALLER
+         SPACE 1
+EXTMAST  DC   0C'  NNN   NNNNN   CCCCHHHH   CCCCHHHH  NNNNNN'      V1L7
+         DC    C' '
+EXTMNO   DC   0C' NNN',C' ',X'202120',CL3' '
+EXTRELTR DC    C'NNNNN',CL3' '                                     V1L7
+EXTMS    DC    C'HHHHHHHH',CL3' '
+EXTME    DC    C'HHHHHHHH'                                         V1L7
+EXTMT    DC   0C' NNNNNNN',C' ',X'20202020202120'                  V1L7
+EXTMASTL EQU   *-EXTMAST
+         SPACE 1
+         DC    0D'0'
+EXTXTAB  EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+         SPACE 1
+         DROP  R9,R12              KILL DSN AND LOCAL ADDRESSABILITY
+         EJECT
+         CNOP  0,8
+LABEL    SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         BALR  R12,0               STORE CURRENT ADDRESS IN R12
+         USING *,R12               ESTABLISH LOCAL ADDRESSABILITY
+         LA    R15,72(,R13)        LOAD ADDRESS OF THE NEXT SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO THE SAVE
+         ST    R15,8(,R13)          AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         LR    R2,R1               COPY DSN ADDR TO R2
+         USING DSN,R2              ESTABLISH ADDRESSABILITY
+         L     R15,PDLPTR1         LOAD ADDRESS OF THE MAIN PDL
+         OC    LABELKW-MAINPDL(,R15),LABELKW-MAINPDL(R15)
+         BZ    LBL0400             BR IF LABEL NOT WANTED
+         LA    R0,17 ----+----1----+--   LOAD MSG LENGTH
+         LA    R1,=C'--FORMAT 1 DSCB--'  LOAD MSG ADDRESS
+         LA    R3,F1DSCB           LOAD ADDR OF THE F1 DSCB
+         LA    R4,LBLF1            LOAD ADDR OF THE FORMAT TABLE
+         BAL   R14,FMTLBL          FORMAT FIELDS IN F1 DSCB        V1L8
+         LA    R5,F2F3-(F2F3NEXT-F2F3DSCB)
+LBL0100  L     R5,F2F3NEXT-F2F3DSCB(,R5) LOAD ADDR OF NEXT
+         LTR   R5,R5               TEST IF END OF CHAIN
+         BZ    LBL0400             BR IF SO
+         LA    R0,17
+         LA    R1,=C'--FORMAT 3 DSCB--'
+         LA    R3,F3DSCB-F2F3DSCB(,R5)
+         LA    R4,LBLF3            LOAD ADDR OF THE FORMAT TABLE
+         CLI   DS3FMTID-F3DSCB(R3),C'3'
+         BE    LBL0200
+         LA    R1,=C'--FORMAT 2 DSCB--'
+         LA    R3,F3DSCB-F2F3DSCB(,R5)
+         LA    R4,LBLF2            LOAD ADDR OF THE FORMAT TABLE
+         CLI   DS2FMTID-F2DSCB(R3),C'2'
+         BNE   LBL0300             BR IF FORMAT IS UNKNOWN
+LBL0200  BAL   R14,FMTLBL          FORMAT FIELDS IN F2 OR F3 DSCB  V1L8
+         B     LBL0100             CONTINUE
+LBL0300  LA    R0,27 ----+----1----+----2----+--
+         LA    R1,=C'*** UNKNOWN FORMAT DSCB ***'
+         L     R15,=A(TPUT)        LOAD START OF TPUT
+         CALL  (15)                CALL TPUT
+LBL0400  L     R13,4(,R13)
+         RETURN (14,12),T
+         EJECT
+         CNOP  6,8                                                 V1L8
+FMTLBL   BASR  R15,0               STORE CURRENT ADDR IN REG 15    V1L8
+         SAVE  (14,12),,FMTLBL     SAVE REGS                       V1L8
+         LA    R15,72(,R13)        LOAD ADDR OF THE NEXT SAVE AREA V1L8
+         ST    R15,8(,13)          ADD NEW SAVE AREA TO THE        V1L8
+         ST    R13,4(,R15)          SAVE AREA CHAIN                V1L8
+         LR    R13,R15             ESTABLISH NEW SAVE AREA ADDR    V1L8
+         L     R15,=A(TPUT)        LOAD ADDRESS OF TPUT ROUTINE    V1L8
+         CALL  (15)                WRITE THE PREFIX LINE
+         MVC   XLINE(2),=CL8' '    CLEAR FIRST TWO BYTES OF OUTPUT LINE
+         LA    R14,XLINE+1         LOAD START OF OUTPUT LINE
+         L     R9,MAXLINE          LOAD MAXIMUM OUTPUT LENGTH
+         AR    R9,R14              COMPUTE EFFECTIVE END OF THE OUTPUT
+FLBL0100 CLI   0(R4),X'FF'         TEST IF END
+         BE    FLBL0500            BR IF SO
+         SR    R5,R5               SET R5 = 0
+         IC    R5,0(,R4)           LOAD OFFSET
+         AR    R5,R3               COMPUTE ADDRESS
+         SR    R6,R6               SET R6 = 0
+         IC    R6,1(,R4)           LOAD LENGTH
+         LA    R4,2(,R4)           COMPUTE ADDR OF NEXT FORMAT ENTRY
+         LA    R15,1(R6,R6)        COMPUTE OUTPUT LENGTH + 1
+         AR    R15,R14             COMPUTE TRIAL END
+         CR    R15,R9              TEST IF DATA FITS
+         BNH   FLBL0200            BR IF SO
+         LA    R1,XLINE            LOAD START OF LINE
+         LR    R0,R14              COPY CURRENT POSITION TO R0
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT
+         CALL  (15)
+         LA    R14,XLINE+1         LOAD START OF LINE
+FLBL0200 MVI   0(R14),C' '         ADD A BLANK
+         LA    R14,1(,R14)         BUMP OUTPUT
+FLBL0300 C     R6,=F'7'            COMPARE REMAINING LENGTH WITH 7
+         BNH   FLBL0400            BR IF 7 OR LESS REMAINS
+         UNPK  0(15,R14),0(8,R5)   TRANSLATE 7 INPUT BYTES
+         TR    0(14,R14),FLBLXTAB   TO HEXADECIMAL
+         LA    R14,14(,R14)        BUMP OUTPUT
+         LA    R5,7(,R5)            AND INPUT
+         S     R6,=F'7'            REDUCE REMAINING LENGTH
+         B     FLBL0300            CONTINUE
+FLBL0400 LR    R1,R6               COPY REMAINING LENGTH TO R1
+         SLL   R1,5                 MOVE TO LEFT
+         OR    R1,R6               ADD REMAINING LENGTH
+         EX    R1,FLBLUNPK         CONVERT REMAINING
+         SRL   R1,4                 DATA TO
+         EX    R1,FLBLTR             HEXADECIMAL
+         LA    R14,0(R1,R14)       COMPUTE NEXT OUTPUT LOCATION
+         B     FLBL0100            AND CONTINUE
+FLBL0500 LA    R1,XLINE            LOAD START OF THE LINE
+         SR    R14,R1              COMPUTE LENGTH
+         LR    R0,R14              COPY LENGTH TO R0
+         L     R15,=A(TPUT)        LOAD ADDR OF TPUT
+         CALL  (15)                WRITE REMAINING DATA
+         L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA V1L8
+         RETURN (14,12),T          RESTORE REGS & RETURN TO CALLER V1L8
+         SPACE 1
+FLBLUNPK UNPK  0(*-*,R14),0(*-*,R5)
+FLBLTR   TR    0(*-*,R14),FLBLXTAB
+         SPACE 1
+LBLF1    GENOFF F1DSCB,DS1FMTID,DS1DSSN,DS1VOLSQ,DS1CREDT,DS1EXPDT,    ?
+               DS1NOEPV,DS1NOBDB,(DS1NOBDB+1,1),DS1SYSCD,DS1REFD,      ?
+               DS1SMSFG,DS1SCEXT,DS1DSORG,DS1RECFM,DS1OPTCD,DS1BLKL,   ?
+               DS1LRECL,DS1KEYL,DS1RKP,DS1DSIND,DS1SCALO,DS1LSTAR,     ?
+               DS1TRBAL,(DS1TRBAL+L'DS1TRBAL,2),DS1EXT1,DS1EXT2,       ?
+               DS1EXT3,DS1PTRDS
+LBLF2    GENOFF F2DSCB,(IECSDSL2,1),DS22MIND,DS2L2MEN,DS2L3MIN,        ?
+               (DS2L3MIN+L'DS2L3MIN,1),DS2LPDT,DS2FMTID,DS2NOLEV,      ?
+               DS2DVIND,DS21RCYL,DS2LTCYL,DS2CYLOV,DS2HIRIN,DS2HIRPR,  ?
+               DS2HIROV,DS2RSHTR,DS2HIRTI,DS2HIIOV,DS2TAGDT,DS2RORG3,  ?
+               DS2NOBYT,DS2NOTRK,DS2PRCTR,DS2STIND,DS2CYLAD,DS2ADLIN,  ?
+               DS2ADHIN,DS2LPRAD,DS2LTRAD,DS2LCYAD,DS2LMSAD,DS2LOVAD,  ?
+               DS2BYOVL,DS2RORG2,DS2OVRCT,DS2RORG1,DS2NIRT,DS2PTRDS
+LBLF3    GENOFF F3DSCB,(IECSDSL3,4),(DS3EXTNT+00,10),(DS3EXTNT+10,10), ?
+               (DS3EXTNT+20,10),(DS3EXTNT+30,10),DS3FMTID,             ?
+               (DS3ADEXT+00,10),(DS3ADEXT+10,10),(DS3ADEXT+20,10),     ?
+               (DS3ADEXT+30,10),(DS3ADEXT+40,10),(DS3ADEXT+50,10),     ?
+               (DS3ADEXT+60,10),(DS3ADEXT+70,10),(DS3ADEXT+80,10),     ?
+               DS3PTRDS
+         DC    0D'0'
+FLBLXTAB EQU   *-C'0'
+         DC    C'0123456789ABCDEF'
+         LTORG ,
+         SPACE 1
+         DROP  R12
+         SPACE 1
+         EJECT
+         CNOP  0,8
+DIRLIST  SAVE  (14,12),,*          SAVE CALLER'S REGISTERS
+         BALR  R12,0               STORE CURRENT ADDRESS IN R12
+         USING *,R12               ESTABLISH LOCAL ADDRESSABILITY
+         LA    R15,72(,R13)        LOAD ADDRESS OF THE NEXT SAVE AREA
+         ST    R13,4(,R15)         ADD NEW SAVE AREA TO THE SAVE
+         ST    R15,8(,R13)          AREA CHAIN
+         LR    R13,R15             ESTABLISH NEW SAVE AREA POINTER
+         LR    R2,R1               COPY DSN ADDR TO R2
+*        WTO   'STARTING DIRLIST'
+*        GETMAIN VRU,LV=(1*1024*1024,64*1024),LOC=(BELOW,ANY)
+*        FREEMAIN R,LV=(0),A=(1)
+*        WTO   'GETMAIN VALIDATED'
+         USING DSN,R2              ESTABLISH ADDRESSABILITY
+         MVI   XALLOC,0            SET DIL FLAGS IN XALLOC
+         L     R3,PDLPTR1          LOAD ADDR OF THE PRIMARY PDL
+         OC    MEMBKW-MAINPDL(,R3),MEMBKW-MAINPDL(R3)
+         BZ    DIL9000             EXIT IF MEMBER LIST NOT WANTED
+         OC    SQUISHKW-MAINPDL(,R3),SQUISHKW-MAINPDL(R3)
+         BZ    *+8                 BR IF SQUISK NOT WANTED
+         MVI   XALLOC,X'FF'        INDICATE SQUISH FORMAT WANTED
+         MVC   DWORK1(2),DSNDSORG  COPY DATA SET'S DSORG
+         NC    DWORK1(2),=AL1(DCBDSGPO,0) TEST IF DSORG = PO
+         BZ    DIL9000             BR IF NOT
+         MVC   OPENAREA(DILOPENL),DILOPEN   COPY OPEN PARM SKELETON L11
+         MVC   DCBAREA(DILDCBL),DILDCB COPY DCB MASTER
+         MVC   DCBEAREA,DILDCBE                                   V1LL1
+         MVC   DCBDDNAM-IHADCB+DCBAREA,DSNDDN COPY DDNAME TO DCB
+         LA    0,DCBEAREA                                         V1L11
+         ST    0,(DCBDCBE-IHADCB)+DCBAREA                         V1L11
+         MVC   OPENAREA(LSMOPENL),DILOPEN COPY MASTER OPEN PARM LIST 11
+         MVC   UDAAREA,DILXLST                                    V1L11
+         LA    0,UDAAREA                                          V1L11
+         STCM  0,B'0111',(DCBEXLST-IHADCB)+1+DCBAREA              V1L11
+         LA    0,UDA-DILXLST+UDAAREA                              V1L11
+         STCM  0,B'0111',UDAAREA+1                                V1L11
+         DROP  R2                  KILL DSN AREA ADDRESSABILITY
+         OPEN  (DCBAREA),MF=(E,OPENAREA) OPEN THE DCB
+*        WTO   'OPEN COMPLETE'
+*        GETMAIN VRU,LV=(1*1024*1024,64*1024),LOC=(BELOW,ANY)
+*        FREEMAIN R,LV=(0),A=(1)
+*        WTO   'GETMAIN VALIDATED'
+         TM    DCBOFLGS-IHADCB+DCBAREA,DCBOFOPN TEST IF DCB IS OPEN
+         BZ    DIL9000             BR IF NOT
+*        MVC   GETAREA(DILGETL),DILGETM COPY GETMAIN PARM LIST TO WORK ?
+                                          AREA
+*        WTO   'ALLOCATING DIRECTORY TABLE'
+*        ABEND 1,DUMP
+*        GETMAIN VU,MF=(E,GETAREA),  ALLOCATE A                        ?
+               LA=DILMIN,             WHOLE LOT                        ?
+               A=DWORK2                OF STORAGE
+         GETMAIN VRU,LV=(1*1024*1024,64*1024),LOC=(BELOW,ANY)
+         ST    R1,DWORK2           SAVE START OF ALLOCATED STORAGE
+         ST    R0,DWORK2+4         SAVE AMOUNT OF ALLOCATED STORAGE
+*        WTO   'DIRECTORY TABLE ALLOCATED'
+         L     R3,DWORK2           LOAD START OF ALLOCATED STORAGE
+         L     R5,DWORK2+4         LOAD LENGTH OF ALLOCATED STORAGE
+         AR    R5,R3               COMPUTE END OF STORAGE
+         S     R5,=F'24'           BACK IT DOWN BY 2 ENTRIES
+         LA    R4,12               SET R4 = 12
+         SR    R9,R9               SET ALLOCATED BLOCKS
+         SR    R10,R10             SET USED BLOCKS
+         ST    R10,DIRENTS         INIT NUMBER OF DIRECTORY ENTRIES L10
+         ST    R10,ALIASENT        INIT NUMBER OF ALIAS ENTRIES   V1L10
+DIL0100  GET   DCBAREA             READ A DIRECTORY BLOCK
+         LA    R9,1(,R9)           ADD ALLOCATED BLOCKS
+         LA    R10,1(,R10)         ADD USED BLOCKS
+         LH    R15,0(,R1)          LOAD AMOUNT OF DATA IN BLOCK
+         AR    R15,R1              COMPUTE END OF BLOCK
+         BCTR  R15,0               BACKUP 1 BYTE
+         LA    R1,2(,R1)           COMPUTE ADDR OF 1ST DIRECTORY ENTRY ?
+                                    IN THE BLOCK
+DIL0200  CLC   =FL8'-1',0(R1)      TEST IF END OF DIRECTORY
+         BE    DIL0300             BR IF SO
+         LA    R0,1                SET REG 0 = 1                  V1L10
+         A     R0,DIRENTS          ADD NUMBER OF DIRECTORY ENTRIES 1L10
+         ST    R0,DIRENTS          UPDATE NUMBER OF DIRECTORY ENTRIES 0
+         TM    11(R1),PDS2ALIS     TEST IF ALIAS                  V1L10
+         BZ    DIL0210             BR IF NOT AN ALIAS             V1L10
+         LA    R0,1                SET REG 0 = 1                  V1L10
+         A     R0,ALIASENT         ADD NUMBER OF ALIAS ENTRIES    V1L10
+         ST    R0,ALIASENT         UPDATE NUMBER OF ALIAS ENTRIES V1L10
+DIL0210  MVC   0(12,R3),0(R1)      COPY THE MEMBER AND TTRC TO MEMBER 0?
+                                    BUFFER AREA                   V1L10
+         BXH   R3,R4,DILEOF        BUMP POINTERS, BR IF MEMBER BUFFER  ?
+                                    IS FULL
+         IC    R14,11(,R1)         LOAD C IN TTRC
+         N     R14,=A(PDS2LUSR)    REMOVE EXCESS BITS
+         LA    R14,12(R14,R14)     COMPUTE COMPLETE LENGTH
+         BXLE  R1,R14,DIL0200      CONTINUE
+         B     DIL0100             READ ANOTHER BLOCK
+DIL0300  GET   DCBAREA             READ ANOTHER BLOCK
+         LA    R9,1(,R9)           ADD 1 TO COUNT OF ALLOCATED BLOCKS
+         B     DIL0300             CONTINUE SCAN
+DILEOF   DC    0H'0'
+*        WTO   'DIRECTORY EOF'
+DIL0400  CLOSE MF=(E,OPENAREA)     CLOSE THE PDS
+*        WTO   'DIRECTORY CLOSED'
+         TM    DCBBUFCB-IHADCB+DCBAREA+3,1 TEST IF BUFFER POOL
+         BO    DIL0500             BR IF NOT
+         FREEPOOL DCBAREA          RELEASE THE BUFFER POOL
+DIL0500  DC    0H'0'
+*        WTO   'FREEING END OF DIRECTORY TABLE'
+         LA    R6,7(R4,R3)         COMPUTE START OF STORAGE TO RELEASE
+         N     R6,=F'-8'
+         LA    R0,24(,R5)          COMPUTE END OF STORAGE TO RELEASE
+         SR    R0,R6               COMPUTE AMOUNT OF STORAGE TO RELEASE
+         FREEMAIN R,LV=(0),A=(R6)  RELEASE STORAGE
+         S     R6,DWORK2           SUBTRACT START OF ALLOCATED STORAGE ?
+                                    FROM START OF RELEASED STORAGE TO  ?
+                                     DETERMINE STORAGE STILL ALLOCATED
+         ST    R6,DWORK2+4         SAVE STORAGE WE MUST STILL LET GO
+         LR    R5,R3               COPY ADDR OF THE LAST ENTRY+1 TO R5
+         SR    R5,R4               COMPUTE ADDR OF THE LAST ENTRY
+* TEST IF JUST DIRSTAT
+         LA    R0,2                SET R0 = 2
+         L     R3,PDLPTR1          LOAD ADDRESS OF THE MDP
+         CH    R0,MEMBKW-MAINPDL(,R3) COMPARE WITH KEYWORD
+         BE    DIL1000             BR IF JUST DIRSTAT
+* MAKE TWO PASSES THROUGH THE MEMBER NAME LIST
+         L     R3,DWORK2           LOAD START OF MEMBER NAME LIST
+         LA    R14,XLINE           LOAD START OF OUTPUT LINE
+         L     R7,MAXLINE          LOAD LENGTH OF OUTPUT LINE
+         AR    R7,R14              COMPUTE END OF OUTPUT LINE
+DIL0600  TM    11(R3),X'80'        TEST IF ALIAS
+         BO    DIL0700             BR IF SO - IGNORE
+         BAL   R8,DILLIST          ADD NAME TO OUTPUT
+         XC    8(3,R3),8(R3)       INDICATE MEMBER DONE
+DIL0700  BXLE  R3,R4,DIL0600       AND CONTINUE
+         L     R3,DWORK2           LOAD START OF THE LIST
+DIL0800  OC    8(3,R3),8(R3)       TEST IF ENTRY USED
+         BZ    DIL0900             BR IF SO
+         BAL   R8,DILLIST          LIST THE MEMBER
+         XC    8(3,R3),8(R3)       INDICATE MEMBER DONE
+DIL0900  BXLE  R3,R4,DIL0800       AND CONTINUE
+         LR    R0,R14              COPY END OF LINE TO R0
+         LA    R1,XLINE            LOAD START OF LINE
+         SR    R0,R1               COMPUTE EFFECTIVE LENGTH
+         BZ    DIL1000             BR IF EMPTY
+         L     R15,=A(TPUT)        LOAD START OF TPUT ROUTINE
+         CALL  (15)                WRITE THE LINE
+*DIL1000  MVC   XLINE(DILSTATL),DILSTAT COPY MESSAGE SKELETON TO XLINE
+*         CVD   R9,DWORK1           CONVERT ALLOCATED DIRECTORY BLKS
+*         ED    DILSTATA-DILSTAT+XLINE,DWORK1+5 TO DECIMAL
+*         CVD   R10,DWORK1          CONVERT USED DIRECTORY BLOCKS
+*         ED    DILSTATU-DILSTAT+XLINE,DWORK1+5 TO DECIMAL
+*         LA    R0,DILSTATL         LOAD LENGTH OF THE MESSAGE
+*                           ----+----1----+---                    V1L10
+DIL1000  MVC   XLINE(18),=C'DIRECTORY BLOCKS: ' BUILD XLINE       V1L10
+         LA    R14,XLINE+18                                       V1L10
+         CVD   R9,DWORK1                                          V1L10
+         BAL   R15,DILFMT                                         V1L10
+*                           ----+----1--                          V1L10
+         MVC   0(12,R14),=C' ALLOCATED, '                         V1L10
+         AHI   R14,12                                             V1L10
+         CVD   R10,DWORK1                                         V1L10
+         BAL   R15,DILFMT                                         V1L10
+*                          ----+                                  V1L10
+         MVC   0(5,R14),=C' USED'                                 V1L10
+         LA    R0,5(,R14)          SET REG 0 = END OF DATA        V1L10
+         LA    R1,XLINE            LOAD START OF XLINE            V1L10
+         SR    R0,R1               COMPUTE LENGTH OF DATA         V1L10
+         L     R15,=A(TPUT)        LOAD ADDRESS OF TPUT           V1L10
+         CALL  (15)                WRITE THE LINE                 V1L10
+         LA    R14,XLINE           LOAD START OF XLINE            V1L10
+         L     R15,DIRENTS                                        V1L10
+         CVD   R15,DWORK1                                         V1L10
+         BAL   R15,DILFMT                                         V1L10
+*                           ----+----1----+----2                  V1L10
+         MVC   0(20,R14),=C' DIRECTORY ENTRIES, '                 V1L10
+         AHI   R14,20                                             V1L10
+         L     R15,ALIASENT                                       V1L10
+         CVD   R15,DWORK1                                         V1L10
+         BAL   R15,DILFMT                                         V1L10
+*                           ----+----1----                        V1L10
+         MVC   0(14,R14),=C' ALIAS ENTRIES'                       V1L10
+         LA    R1,XLINE            LOAD START OF MESSAGE
+         LA    R0,14(,R14)         SET END OF MESSAGE IN REG 0    V1L10
+         SR    R0,R1               COMPUTE MESSAGE LENGTH         V1L10
+         L     R15,=A(TPUT)        LOAD START OF TPUT ROUTINE
+         CALL  (15)                WRITE IT OUT
+*        WTO   'FREEING DIRECTORY TABLE'
+         L     R0,DWORK2+4         LOAD LENGTH OF AREA TO RELEASE
+         L     R1,DWORK2           LOAD START OF AREA TO RELEASE
+         FREEMAIN R,LV=(0),A=(1)   RELEASE THE MEMBER TABLE
+DIL9000  L     R13,4(,R13)         LOAD ADDR OF CALLER'S SAVE AREA
+         RETURN (14,12),T          RESTORE REGS AND RETURN TO CALLER
+         EJECT                                                    V1L10
+         CNOP  0,8                                                V1L10
+DILFMT   ST    R15,68(,R13)        SAVE LINK REG                  V1L10
+         MVC   16(6,R13),=X'402020202120'  COPY EDIT MASK         V1L10
+         LA    R1,16+5(,R13)       SET START OF SIGNFICANCE       V1L10
+         EDMK  16(6,R13),DWORK1+5  CONVERT VALUE                  V1L10
+         LR    R0,R1               COPY START OF SIGNIFICANCE     V1L10>
+                                    TO REG 0                      V1L10
+         LA    R1,16+6(,R13)       LOAD END OF CONVERTED NUM      V1L10
+         SR    R1,R0               COMPUTE LENGTH OF NUMBER       V1L10
+         LR    R15,R1              COPY LENGTH TO REG 15          V1L10
+         MVCL  R14,R0              MOVE NUMBER TO OUTPUT          V1L10
+         L     R15,68(,R13)        RELOAD LINK REG                V1L10
+         BR    R15                 RETURN                         V1L10
+         EJECT
+         CNOP  0,8
+DILLIST  L     R2,DWORK2           LOAD START OF MEMBER LIST
+DILL0100 OC    8(3,R2),8(R2)       TEST IF ENTRY USED
+         BZ    DILL0200            BR IF SO
+         CR    R2,R3               TEST IF COMMON ENTRY
+         BE    DILL0200            BR IF SO
+         CLC   8(3,R3),8(R2)       COMPARE TTR
+         BE    DILL0500            BR IF ALIAS FOUND
+DILL0200 BXLE  R2,R4,DILL0100      CONTINUE SCAN
+* NO ALIAS WAS FOUND - JUST PRINT THE MEMBER NAME
+         CLI   XALLOC,0            TEST IF SQUISH
+         BE    DILL0400            BR IF NOT
+         LA    R0,XLINE            LOAD START OF XLINE
+         CR    R0,R14              TEST IF CURRENTLY STARTING A LINE
+         BE    DILL0210            BR IF SO
+* DETERMINE LENGTH OF THE PRIMARY MEMBER
+         LA    R15,8(,R3)
+         BCTR  R15,0
+         CLI   0(R15),C' '
+         BE    *-6
+         LA    R15,4(,R15)         ADD 1 + LENGTH OF ', ' AT START AND ?
+                                    A COMMA AT THE END
+         SR    R15,R3              COMPUTE LENGTH
+         AR    R15,R14             COMPUTE TRIAL END
+         CR    R15,R7              TEST IF MEMBER NAME FITS ON LINE
+         BNH   DILL0300            BR IF MEMBER NAME FITS ON LINE
+         MVI   0(R14),C','         ADD COMMA
+         LA    R0,1(,R14)          UPDATE END OF LINE
+         LA    R1,XLINE            LOAD START OF LINE
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT ROUTINE
+         CALL  (15)                WRITE THE LINE
+         LA    R14,XLINE           LOAD START OF LINE
+DILL0210 MVC   0(8,R14),0(R3)      COPY MEMBER NAME
+         LA    R14,8(,R14)         COMPUTE END OF MEMBER NAME
+         BCTR  R14,0
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+         BR    R8                  NO ALIAS - RETURN
+DILL0300 MVC   0(2,R14),=C', ('    ADD TEXT
+         LA    R14,2(,R14)         UPDATE POINTER
+         MVC   0(8,R14),0(R3)      COPY MEMBER NAME
+         LA    R14,8(,R14)
+         BCTR  R14,0               COMPUTE END OF NAME
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+         BR    R8                  RETURN -- NO ALIAS
+* NON SQUISHED MEMBER NAME
+DILL0400 LA    R14,XLINE           LOAD START OF LINE
+         MVC   0(8,R14),0(R3)      COPY MEMBER NAME
+         LA    R14,8(,R14)         COMPUTE END OF MEMBER NAME
+         BCTR  R14,0
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R0,1(,R14)
+         LA    R1,XLINE            LOAD START OF LINE
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT ROUTINE
+         CALL  (15)                WRITE THE LINE
+         LA    R14,XLINE
+         BR    R8
+DILL0500 DC    0H'0'
+* ALIAS WAS FOUND
+         XC    8(3,R2),8(R2)       INDICATE MEMBER PROCESSED
+         CLI   XALLOC,0            TEST IF SQUISH
+         BE    DILL1100            BR IF NOT
+* DETERMINE LENGTH OF THE PRIMARY MEMBER
+         LA    R15,8(,R3)
+         BCTR  R15,0
+         CLI   0(R15),C' '
+         BE    *-6
+         LA    R0,XLINE            LOAD START OF OUTPUT AREA
+         CR    R0,R14              COMPARE START OF OUTPUT AREA WITH   ?
+                                    CURRENT ADDRESS
+         BE    DILL0510            BR IF STARTING LINE
+         LA    R15,5(,R15)         ADD 1 + LENGTH OF ', (' AT START    ?
+                                    AND A COMMMA AT THE END
+         SR    R15,R3              COMPUTE LENGTH
+         AR    R15,R14             COMPUTE TRIAL END
+         CR    R15,R7              COMPARE TRIAL END WITH ACTUAL END
+         BNH   DILL0600            BR IF MEMBER NAME FITS ON LINE
+         MVI   0(R14),C','         ADD COMMA
+         LA    R0,1(,R14)          UPDATE END OF LINE
+         LA    R1,XLINE            LOAD START OF LINE
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT ROUTINE
+         CALL  (15)                WRITE THE LINE
+DILL0510 MVI   XLINE,C'('          START XLINE WITH A (
+         LA    R14,XLINE+1         LOAD START OF LINE
+         MVC   0(8,R14),0(R3)      COPY MEMBER NAME
+         LA    R14,8(,R14)         COMPUTE END OF MEMBER NAME
+         BCTR  R14,0
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+         B     DILL0700            CONTINUE
+DILL0600 MVC   0(3,R14),=C', ('    ADD TEXT
+         LA    R14,3(,R14)         UPDATE POINTER
+         MVC   0(8,R14),0(R3)      COPY MEMBER NAME
+         LA    R14,8(,R14)
+         BCTR  R14,0               COMPUTE END OF NAME
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+DILL0700 DC    0H'0'
+* DETERMINE LENGTH OF THE ALIAS MEMBER
+         LA    R15,8(,R2)
+         BCTR  R15,0
+         CLI   0(R15),C' '
+         BE    *-6
+         LA    R15,5(,R15)         ADD 1 + LENGTH OF ', ' AT START AND ?
+                                    A '),' AT THE END
+         SR    R15,R2              COMPUTE LENGTH
+         AR    R15,R14             COMPUTE TRIAL END
+         CR    R15,R7              COMPARE TRIAL END WITH END OF LINE
+         BNH   DILL0800            BR IF MEMBER NAME FITS ON LINE
+         MVI   0(R14),C','         ADD COMMA
+         LA    R0,1(,R14)          UPDATE END OF LINE
+         LA    R1,XLINE            LOAD START OF LINE
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT ROUTINE
+         CALL  (15)                WRITE THE LINE
+         LA    R14,XLINE           LOAD START OF LINE
+         MVC   XLINE,=CL8' '       CLEAR 8 BYTES
+         CLI   XALLOC,0            TEST IF SQUISH MODE
+         BNE   *+8                 BR IF SO
+         LA    R14,8(,R14)         NON-SQUISH - UPDATE POINTER
+         MVC   0(8,R14),0(R2)      COPY MEMBER NAME
+         LA    R14,8(,R14)         COMPUTE END OF MEMBER NAME
+         BCTR  R14,0
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+         B     DILL0900
+DILL0800 MVC   0(2,R14),=C', ('    ADD SEPARTOR
+         MVC   2(8,R14),0(R2)      COPY ALIAS NAME
+         LA    R14,10(,R14)
+         BCTR  R14,0
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+* SCAN FOR THE NEXT ALIAS ENTRY
+DILL0900 BXH   R2,R4,DILL1000      SCAN THE TABLE
+         CR    R2,R3               TEST IF THIS ONE
+         BE    DILL0900            BR IF SO
+         CLC   8(3,R2),8(R3)       TEST IF MATCH
+         BNE   DILL0900            BR IF NOT, CONTINUE SCAN
+         XC    8(3,R2),8(R3)       INDICATE MEMBER HAS BEEN DONE
+         B     DILL0700            GO DO THE ALIAS
+DILL1000 MVI   0(R14),C')'         ADD TRAILING PAREN
+         LA    R14,1(,R14)         BUMP OUTPUT POINTER
+         CLI   XALLOC,0            TEST IF SQUISH
+         BNER  R8                  RETURN IF SO
+         LR    R0,R14              COPY R14 TO R0
+         LA    R1,XLINE            LOAD START OF OUTPUT AREA
+         SR    R0,R1               COMPUTE LENGTH
+         L     R15,=A(TPUT)        LOAD START OF TPUT SERVICE
+         CALL  (15)                CALL TPUT
+         LA    R14,XLINE           LOAD START OF OUTPUT LINE
+         BR    R8
+* NON SQUISHED MEMBER NAME
+DILL1100 LA    R14,XLINE           LOAD START OF LINE
+         MVC   0(8,R14),0(R3)      COPY MEMBER NAME
+         LA    R14,8(,R14)         COMPUTE END OF MEMBER NAME
+         BCTR  R14,0
+         CLI   0(R14),C' '
+         BE    *-6
+         MVC   1(2,R14),=C' ('     START ALIAS LIST IN STYLE
+         MVC   3(8,R14),0(R2)      COPY FIRST ALIAS NAME
+         LA    R14,11(,R14)        COMPUTE END
+         BCTR  R14,0               FIND END OF THE NAME
+         CLI   0(R14),C' '
+         BE    *-6
+         LA    R14,1(,R14)
+         B     DILL0900            JOIN SQUISH IN PROGRESS TO FINISH
+         EJECT
+         DC    0D'0'
+DILOPEN  OPEN  (*-*,INPUT),MF=L
+DILOPENL EQU   *-DILOPEN
+DILMIN   DC    A(64*1024,1*1024*1024)
+         PUSH  PRINT
+         PRINT NOGEN
+DILDCB   DCB   RECFM=F,LRECL=256,BLKSIZE=256,DSORG=PS,                 ?
+               MACRF=GL,DDNAME=FILLMEIN,DCBE=*-*                  V1L11
+DILDCBL  EQU   *-DILDCB
+DILDCBE  DCBE  EODAD=DILEOF,EADSCB=OK                             V1L12
+DILXLST  DC    0A(0),AL1(X'80'+X'14'),AL3(*-*)                    V1L11
+         IHAUDA DSECT=NO                                           V1L6
+         ORG   UDAFLAG3                                            V1L6
+         DC    AL1(UDANORFU)                                       V1L6
+         ORG   ,                                                   V1L6
+UDASIZE  EQU   *-DILXLST                                          V1L11
+         POP   PRINT
+DILGETM  GETMAIN VU,MF=L
+DILGETL  EQU   *-DILGETM
+         DC    0D'0'
+         LTORG ,
+*DILSTAT  DC   0C'ALLOCATED = NNNNN, USED = NNNNN DIRECTORY BLOCKS'
+*         DC    C'ALLOCATED ='
+*DILSTATA DC   0C' NNNNN',C' ',X'2020202120'
+*         DC    C', USED ='
+*DILSTATU DC   0C' NNNNN',C' ',X'2020202120'
+*         DC    C' DIRECTORY BLOCKS'
+*DILSTATL EQU   *-DILSTAT
+*DILSTAT  DC   0C'DIRECTORY BLOCKS: NNNNN ALLOCATED, NNNNN USED'
+*         DC    C'DIRECTORY BLOCKS:'
+*DILSTATA DC   0C' NNNNN',C' ',X'2020202120',C' ALLOCATED,'
+*DILSTATU DC   0C' NNNNN',C' ',X'2020202120',C' USED'
+*DILSTATL EQU   *-DILSTAT
+         DC    0D'0'
+         EJECT
+DYNALOLD DC    A(X'80000000'+DYNAORB-DYNALOLD)
+         SPACE 1
+DYNAORB  DC    AL1(S99RBEND-S99RB,S99VRBAL,S99NOCNV+S99NOMNT,0)
+         DC    2AL2(0)
+         DC    A(DYNAOTP1-DYNALOLD)
+         DC    2A(0)
+         SPACE 1
+DYNAOTP1 DC    A(DYNAOTU1-DYNALOLD,DYNAOTU2-DYNALOLD)
+         DC    A(DYNAOTU3-DYNALOLD,DYNAOTU4-DYNALOLD)
+         DC    A(DYNAOTU5-DYNALOLD,DYNAOTU6-DYNALOLD)
+         DC    A(X'80000000'+DYNAOTU7-DYNALOLD)
+         SPACE 1
+DYNAOTU1 DC    AL2(DALDSNAM,1,44)
+DYNAODSN DC    CL44' '
+DYNAOTU6 DC    AL2(DALRTDSN,1,44)
+DYNAADSN DC    CL44' '
+DYNAOTU3 DC    AL2(DALUNIT,1,8),CL8'SYSALLDA'
+DYNAOTU4 DC    AL2(DALVLSER,1,6)
+DYNAOVOL DC    CL6' '
+DYNAOTU5 DC    AL2(DALRTDDN,1,8)
+DYNAODDN DC    CL8' '
+DYNAOTU7 DC    AL2(DALRTORG,1,2)
+DYNAOORG DC    AL2(0)
+DYNAOTU2 DC    AL2(DALSTATS,1,1),AL1(DISPSHR)
+         SPACE 1
+DYNAOLEN EQU   *-DYNALOLD
+         SPACE 5
+DYNFREE  DC    A(X'80000000'+DYNFRRB-DYNFREE)
+         SPACE 1
+DYNFRRB  DC    AL1(S99RBEND-S99RB,S99VRBUN,0,0)
+         DC    2AL2(0)
+         DC    A(DYNFRTUP-DYNFREE)
+         DC    2A(0)
+         SPACE 1
+DYNFRTUP DC    A(X'80000000'+DYNFRTU1-DYNFREE)
+         SPACE 1
+DYNFRTU1 DC    AL2(DUNDDNAM,1,8)
+DYNFRDDN DC    CL8' '
+         SPACE 1
+DYNFRLEN EQU   *-DYNFREE
+         SPACE 5
+DISPSHR  EQU   X'08'
+         EJECT
+         DC    0D'0'
+MSGS     DC    0D'0'
+         IKJTSMSG (,' '),DATA
+         IKJTSMSG ,
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+MAINPCL  IKJPARM  DSECT=MAINPDL
+MAINPCL  RMODE ANY
+MAINDSN  IKJPOSIT DSNAME,USID,LIST,PROMPT='DATA SET NAME'
+RECALLKW IKJKEYWD DEFAULT='NORECALL'                               V1L9
+         IKJNAME  RECALL                                           V1L9
+         IKJNAME  NORECALL                                         V1L9
+MEMBKW   IKJKEYWD
+         IKJNAME MEMBERS                                          V1L12
+         IKJNAME  DIRSTAT,ALIAS='DS'
+SQUISHKW IKJKEYWD
+         IKJNAME  SQUISH
+LABELKW  IKJKEYWD
+         IKJNAME  LABEL
+EXTENTKW IKJKEYWD
+         IKJNAME  EXTENTS
+VOLKW    IKJKEYWD
+         IKJNAME  VOLUME,SUBFLD=VOLSF
+VOLSF    IKJSUBF
+VOLV     IKJIDENT 'VOLUME',FIRST=ALPHA,OTHER=ALPHANUM,                 ?
+               PROMPT='VOLUME SERIAL WHERE DATA SET IS LOCATED'
+         IKJENDP
+         SPACE 5
+DSNPCL   IKJPARM  DSECT=DSNPDL
+DSNPCL   RMODE ANY
+DSNDSN   IKJPOSIT DSNAME,USID,PROMPT='DATA SET NAME'
+         IKJENDP
+         POP   PRINT
+         EJECT
+         PRINT NOGEN
+         IKJCPPL
+         SPACE 5
+         IKJPPL
+PPLSIZE  EQU   *-PPL
+         SPACE 5
+         IKJIOPL
+IOPLSIZE EQU   *-IOPL
+         EJECT
+DSN      DSECT
+DSNNEXT  DS    A                   NEXT DSN ENTRY
+DSNPDE   DS    A                   POINTER TO PDE
+DSNUCB   DS    A                   POINTER TO UCB
+DSNZDTAB DS    A                   POINTER TO DEVICE CHARACTERISTICS   ?
+                                    TABLE ENTRY FOR DEVICE
+DSNDDN   DS    CL8                 ALLOCATED DDNAME
+DSNDSORG DS    XL2                 DSORG RETRIEVED BY DYNALLOC
+DSNDSNA  DS    CL44                TRUE DSNAME
+DSNDSNP  DS    CL44                DSNAME FROM PDE
+         DS    0D
+DSNLEN   EQU   *-DSN
+         EJECT
+MAINWORK DSECT
+DWORK1   DS    D
+DWORK2   DS    D
+FWORK1   EQU   DWORK1,4,C'F'
+FWORK2   EQU   DWORK1+4,4,C'F'
+FWORK3   EQU   DWORK2,4,C'F'
+FWORK4   EQU   DWORK2+4,4,C'F'
+DUMMYBUF EQU   DWORK1,L'MASTBUF,C'C'
+MYPPL    DS    XL(PPLSIZE),0D
+MYIOPL   DS    XL(IOPLSIZE),0D
+MYPUTL   PUTLINE MF=L,                                                 >
+               OUTPUT=(*-*,TERM,SINGLE,DATA)
+MYPUTLL  EQU   *-MYPUTL
+OPENAREA DS    0XL8
+         ORG   OPENAREA+LSMOPENL
+         ORG   ,
+         DS    0D
+DCBAREA  DS    0XL96
+         ORG   DCBAREA+LSMDCBL
+         ORG   DCBAREA+DILDCBL
+         ORG   ,
+DCBEAREAS DCBE EODAD=*-*
+DCBEAREA EQU   DCBEAREAS,*-DCBEAREAS
+         DS    0F
+UDAAREA  DS    XL(UDASIZE),0F
+LINKS    LINK  SF=L,EPLOC=*-*,ERRET=*-*
+LINKL    EQU   *-LINKS
+CALLSMS  EQU   LINKS,LINKL,C'X'
+         DS    0D'0'
+GETAREA  DS    XL(DILGETL),0D
+BLDLAREA DS    AL2(1,L'BLDLENT)
+BLDLENT  DS    XL62
+         DS    0D'0'
+MYCAMLST DS    XL(CAMLST1L)
+         ORG   MYCAMLST+CAMLST1L
+         ORG   MYCAMLST+CAMLST2L
+         ORG   ,
+         DS    0D
+         IKJEFFMT ,
+         IKJEFFDF DFDSEC2=YES
+MAINWORK DSECT
+DIRENTS  DS    A                   NUMBER OF DIRECTORY ENTRIES    V1L10
+ALIASENT DS    A                   NUMBER OF ALIAS ENTRIES        V1L10
+MYTIOT   DS    A
+FF02ADDR DS    A                   ADDRESS OF IKJEFF02
+PUTLADDR DS    A                   ADDRESS OF IKJPUTL
+ECB      DS    F
+PDLPTR1  DS    A
+PDLPTR2  DS    A
+FF02PTR  DS    A
+DSNLIST  DS    2A
+         DS    0D
+F2F3     DS    2A
+PARM4UV  DS    0XL12
+UNAME4UV DS    CL8
+DVUNIT   DS    XL4
+         DS    2A(0)
+SMSPARM  CALL  ,(SMSRC,SMSRESN,SMSPROB,F44,DS1DSNAM,SMSDATA,SMSTYPE),  ?
+               VL,MF=L
+MAXLINE  DS    A
+SMSRC    DS    A
+SMSRESN  DS    A
+SMSPROB  DS    2A
+SMSTYPE  DS    F
+SMSDATA  DS    0CL30
+SMSSTORC DS    CL30
+SMSMGMTC DS    CL30
+SMSDATAC DS    CL30
+F1DSCB   DS    0XL140
+         IECSDSL1 1
+         ORG   DS1FMTID+(*-F1DSCB)
+         AIF   (D'DS1LARGE).LGOK                                   V1L5
+DS1LARGE EQU   X'08'    (DS1FLAG1) DATA SET CAN BE > 64K TRACKS    V1L5
+.LGOK    AIF   (D'DS1TTTHI).TTTOK                                  V1L5
+         ORG   DS1TRBAL+3          RESET THE ORIGIN                V1L5
+DS1TTTHI DS    XL1                 HIGH ORDER BYTE OF DS1LSTAR     V1L5
+.TTTOK   ORG   ,                                                   V1L5
+XALLOCD  DS    0D
+         ORG   XALLOCD+DYNAOLEN
+         ORG   ,
+XALLOCL  EQU   *-XALLOCD
+         ORG   XALLOCD
+XALLOC   DS    XL(XALLOCL)
+         DS    0F
+         DS    2AL2(0)
+XLINE    DS    CL127
+         ORG   XLINE               RESET ORIGIN                    V1L7
+         DS    CL2                                                 V1L7
+XSPFNAME DS    CL8                 MEMBER NAME                     V1L7
+XSPFSIZE DS    CL6                 MEMBER SIZE (0->65525)          V1L7
+XSPFINIT DS    CL6                 INITAL MEMBER SIZE (0-65535)    V1L7
+XSPFMOD  DS    CL6,C               MODIFIED RECORDS (0-65535)      V1L7
+XSPFCRTD DS    C'YY/MM/DD',C       CREATED DATE                    V1L7
+XSPFMODD DS    C'YY/MM/DD',C       MODIFIED DATE                   V1L7
+XSPFMODT DS    C'HH:MM:SS',C       MODIFIED TIME                   V1L7
+XSPFVER  DS    C'VV',C':'          VERSION                         V1L7
+XSPFLVL  DS    C'LL',C' '          LEVEL                           V1L7
+XSPFID   DS    CL8' '              ID                              V1L7
+         ORG   ,                                                   V1L7
+         DS    0D
+* FOLLOWING CODE, WARTS AND ALL, SORT OF COPIED FROM LDS (CBT FILE 452)
+FAMSPARM DS    3F                                                 V1L12
+LITS     DS    CL(L'FAMSLITS)                                     V1L12
+FAMSFMH  DS    0F,XL136                                           V1L12
+FAMSFMHL EQU   *-FAMSFMH                                          V1L12
+FAMSFMO  DS    0F,XL1104                                          V1L12
+FAMSLIST DS    3F                                                 V1L12
+FAMPTRL1 DS    6F                                                 V1L12
+FAMPTRL2 DS    6F                                                 V1L12
+FAMPTRL3 DS    6F                                                 V1L12
+         DS    2A                                                 V1L12
+XDSNLEN  DS    H                                                  V1L12
+XDSN     DS    CL44                                               V1L12
+         ORG   MAINWORK+(4096-10*9*8)-8
+S        DS    (10*9)D'0'
+WORKL    EQU   *-MAINWORK
+         EJECT
+F2F3DSCB DSECT
+F2F3NEXT DS    A
+*        DS    A
+F2DSCB   DS    0XL140
+         IECSDSL1 2
+         ORG   F2DSCB
+F3DSCB   DS    0XL140
+         IECSDSL1 3
+         ORG   ,
+         DS    0D
+F2F3LEN  EQU   *-F2F3DSCB
+         EJECT
+         PUSH  PRINT
+         PRINT NOGEN
+         DCBD  DSORG=QS,DEVD=DA
+         CVT   DSECT=YES
+         IKJTCB  ,
+         IEZDEB  ,
+         IHADFA ,                                                 V1L12
+         IHADFVT ,                                                V1L12
+         IHAPDS PDSBLDL=YES,DSECT=YES
+         ORG   PDS2USRD            RESET ORIGIN                    V1L7
+* ISPF DIRECTORY USER DATA                                         V1L7
+SPFVER   DS    AL1         E 14  0 VERSION                         V1L7
+SPFMOD   DS    AL1         F 15  1 LEVEL                           V1L7
+         DS    AL1        10 16  2 NOT USED ?                      V1L7
+SPFMODSS DS    AL1        11 17  3 MOD SS (P.D. DIGITS)            V1L7
+SPFCREAT DS    AL4        12 18  4 CREATION DATE (0YYYDDDF)        V1L7
+SPFMODD  DS    AL4        16 22  8 LAST MOD DATE (0YYYDDDF)        V1L7
+SPFMODT  DS    2AL1       1A 26 12 LAST MOD TIME (HH:MM) (P.D.     V1L7>
+                                                           DIGITS  V1L7
+SPFSIZE  DS    AL2        1C 28 14 RECORDS IN MEMBER               V1L7
+SPFINIT  DS    AL2        1E 30 16 RECORDS IN MEMBER WHEN CREATED  V1L7
+SPFMODR  DS    AL2        20 32 18 MODIFIED RECORDS IN MEMBER      V1L7
+SPFUSER  DS    CL8        22 34 20 USERID                          V1L7
+         DS    CL2        2A 42 28 UNKNOWN (BUT NORMALLY BLANK?)   V1L7
+SPFLEN   EQU   *-PDS2USRD          BETTER BE 30 (X'1E')            V1L7
+TIOT     DSECT
+         IEFTIOT1 ,
+         IEFUCBOB ,
+         IHADVCT ,
+         IEFZB4D0 ,
+         IEFZB4D2 ,
+         POP   PRINT
+         END   DSSTAT

@@ -1,0 +1,288 @@
+XI22     TITLE '                    X I ,   X I N   A N D   X I N P   C>
+                O M M A N D S'
+***********************************************************************
+*                                                                     *
+* Title -- XI22                                                       *
+*                                                                     *
+* Function / Operation -- XI22 is a revised implementation of the TSO *
+*   XI and XIN commands.  The commands are implemented as a common    *
+*   module as they are 99% common; the only practical difference is   *
+*   the TSO STACK function is called with different parameters.  XI   *
+*   and XIN provide a mechanism for a TSO command line user to enter  *
+*   more than one command in a single comand line.  TSO users using   *
+*   3270 type terminals have long had the option of using the 3270    *
+*   field mark key to effect a similar function to using the XIN      *
+*   command.  However, as the use of 3270 emulator programs on        *
+*   personal computers have effectivly eliminated real 3270           *
+*   terminals, the use of field mark has dropped because it usually   *
+*   requires pressing two or sometimes multiple keys that vary in     *
+*   an inconsistent manner from 3270 terminal emulator to terminal    *
+*   emulator, or even from different versions of a single emulator.   *
+*   The \ key - the default command delimiter in XI and XIN - is a    *
+*   single key stroke, usually in a similar keyboard position as the  *
+*   real 3270 field mark key, and is not commonly used in TSO         *
+*   commands.                                                         *
+*                                                                     *
+*   From a user's point of view there are two differences between XI  *
+*   and XIN.                                                          *
+*    - Commands entered through XI are displayed on the terminal      *
+*      before they are executed.                                      *
+*    - Commands with defective parameters entered through XI can      *
+*      prompt the terminal operator for correct data for corrections. *
+*                                                                     *
+* Status / Change Level                                               *
+*   V2L2                                                              *
+*    * A valid alternate delimiter can be any character that is not   *
+*      numeric or not alphabetic.  See the DLMTEST table.             *
+*    * A third entry point - XINP added.  XINP, basically, is XI      *
+*      but the executed commands cannot prompt the terminal operator  *
+*      to obtain missing or incorrect data.  XIN has always           *
+*      prohibited prompting.                                          *
+*    * The CSECT changed to XI22                                      *
+*   V2L1 -- February 2017                                             *
+*    * The STPB is constructed using list form STACK macros           *
+*    * The work area is built based from the IOPL                     *
+*    * IOPLECT, IOPLUPT and IOPLECB are built by hand rather than in  *
+*      the E form of the PUTLINE and STACK macros                     *
+*    * The CSECT changed to XI21                                      *
+*   V2L0 -- February 2017                                             *
+*    * Null command analysis corrected                                *
+*    * Messages issued by PUTLINE rather than IKJEFF02                *
+*    * The internal buffer has been eliminated; there is no limit on  *
+*      the size of the commands that can be stacked.                  *
+*    * The DEFAULT entry point that contains the default command      *
+*      delimiter has been eliminated.                                 *
+*                                                                     *
+* Attributes -- XI22 is reenterable, refreshable and reusable. It     *
+*   operates as a TSO command processor in task mode, enabled,        *
+*   problem key and problem state.  It uses no APF restricted z/OS    *
+*   services and does not evade any known z/OS integrity controls.    *
+*   XI22 accesses the command line directly; it does not use IKJPARS. *
+*                                                                     *
+* Command line --                                                     *
+*   command  command1\command2                                        *
+*   command is either XI, XINP or XIN                                 *
+*   The \ delimits the commands.  You can specify an alternate        *
+*     delimiter character by inserting it before command1.  You can   *
+*     use any character lower in the EBCDIC collating sequence than a *
+*     lower case a that is not used in a command.  For example -      *
+*       XI +send 'Hello Joe' u(joe+se 'Hello Jane' u(jane             *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+XI22     RSECT
+XI22     AMODE 31
+XI22     RMODE ANY
+         ENTRY XI,XIN,XINP
+         SR    15,15
+         BR    14
+         DC    C'XI, XINP AND XIN TSO COMMANDS VERSION 2.2 &SYSDATE &SY>
+               STIME COPYRIGHT 2017 J. STEPHEN MYERS',0D'0'
+         SPACE 2
+         USING *,15
+XI       SAVE  (14,12),,'XI IN XI22'
+         LA    2,XICMD             Load an initial setting for FLAG
+         B     COMMON
+         DROP  15
+         SPACE 2
+         CNOP  0,8
+XIN      SAVE  (14,12),,'XIN IN XI22'
+         LA    2,XINCMD            Load an initial setting for FLAG
+         B     COMMON-XIN(,15)
+         SPACE 2
+         CNOP  0,8
+XINP     SAVE  (14,12),,'XINP IN XI22'
+         LA    2,XINPCMD           Load the initial FLAG
+         SPACE 2
+         CNOP  0,8
+COMMON   BASR  12,0                Store current address in reg 12
+         USING IOPL,11             Establish work arewa addressability
+         USING *,12                Establish program addressability
+         LM    6,9,0(1)            Load the CPPL into regs 6 to 9
+         LA    5,WASIZE            Allocate the work area
+         GETMAIN R,LV=(5)
+         SR    15,15               Prepare regs 4 and 11
+         LR    4,1
+         LR    11,1
+         MVCL  4,0                 Clear the work area
+         LA    15,SAVEAREA         Compute new save area address
+         ST    13,SAVEAREA+4       Add the new save area
+         ST    15,8(,13)            to the save area chain
+         LR    13,15               Prepare the new save area pointer
+         LA    0,ECB               Initialize
+         ST    RECT,IOPLECT         the
+         ST    RUPT,IOPLUPT          IOPL
+         ST    0,IOPLECB
+         STC   2,FLAG
+         LA    14,STPBTABN         Select
+         LA    15,STPBTAB           the
+CHKFLAG  CLM   2,B'0001',0(15)       correct
+         BE    GOTFLAG                STPB
+         LA    15,5(,15)               skeleton
+         BCT   14,CHKFLAG
+         DC    H'0'                Table problem, or reg 2 setup
+GOTFLAG  ICM   1,B'1111',1(15)
+         MVC   STPBAREA,0(1)
+         LH    15,2(,RCBUF)        Prepare registers
+         LH    3,0(,RCBUF)          to scan
+         AR    3,RCBUF                the
+         BCTR  3,0                     command
+         LA    4,4(15,RCBUF)            line
+*  Register  Purpose
+*      2     Will be set to 1
+*      3     Address of last byte in the command line
+*      4     Current address in the command line
+         SR    5,5                 Init the length of the stack       ->
+                                    command buffer
+         MVI   DLM,C'\'            Set the default delimiter
+         CR    4,3                 Check the boundary
+         BH    NOCMDS              Br if no commands
+         TRT   0(1,4),DLMTEST      Test if the first character is an
+         LA    2,1                  alternate delimiter
+         BNZ   SCAN1100
+         MVC   DLM,0(4)            Save the alternate delimiter
+         OI    FLAG,XDLM           Indicate alternate delimiter
+         BXH   4,2,NOCMDS          Advance the command line pointer
+SCAN1100 LR    14,4                Save the start of a possible command
+SCAN1200 CLC   DLM,0(4)            Got a delimiter?
+         BE    SCAN1300            Yes
+         BXLE  4,2,SCAN1200        Adcance the command line pointer
+SCAN1300 LR    15,4               Copy the end of the command to reg 15
+         SR    15,14               Compute the length
+         BNP   SCAN1400            Br if 0
+         LA    5,4(15,5)           Update the command buffer length
+SCAN1400 BXLE  4,2,SCAN1100        Advance the command line pointer
+         LTR   5,5                 Cammand buffer length = 0?
+         BNZ   SCAN1500            No
+NOCMDS   LA    0,1                 Write the diagnostic
+         LA    1,MSG01
+         STM   0,1,OLD+4
+         XC    PUTLPB,PUTLPB
+         PUTLINE MF=(E,IOPL),OUTPUT=(OLD,TERM,MULTLVL,INFOR),         ->
+               PARM=PUTLPB,ENTRY=CALLPUTL
+         B     EXIT
+SCAN1500 LA    0,LSDSIZE+7(,5)     Allocate the LSD
+         N     0,=F'-8'             and command buffer
+         O     0,=AL1(LSDSP,0,0,0)
+         GETMAIN R,LV=(0)
+         XC    0(LSDSIZE,1),0(1)   Init the LSD
+         ST    1,(STPBALSD-STPB)+STPBAREA  Store the LSD address in   ->
+                                            the STPB
+         LA    0,LSDSIZE(,1)       Init the LSD
+         STH   5,LSDTOTLN-LSD(,1)
+         ST    0,LSDADATA-LSD(,1)
+         ST    0,LSDANEXT-LSD(,1)
+         LH    15,2(,RCBUF)        Preparee to fill the STACK command ->
+                                    buffer
+         LA    4,4(15,RCBUF)
+         TM    FLAG,XDLM
+         BZ    SCAN2100
+         BXH   4,2,EXIT
+SCAN2100 LR    14,4                Save the start of the command
+SCAN2200 CLC   DLM,0(4)            Got a delimiter?
+         BE    SCAN2300            Yes
+         BXLE  4,2,SCAN2200        Advance the command line pointer
+SCAN2300 LR    15,4               Copy the end of the command to reg 15
+         SR    15,14               Compute the command length
+         BNP   SCAN2400            Br if 0
+         LA    5,4(,15)            Compute the length
+         SLL   5,16                Convert length to an RDW
+         LR    10,0                Copy the addr of the next cmd to   ->
+                                    reg 10
+         STCM  5,B'1111',0(10)     Store the RDW
+         LA    0,4(,10)
+         LR    1,15
+*        NOPR  0
+         MVCL  0,14             Copy the command to the command  buffer
+SCAN2400 BXLE  4,2,SCAN2100        Advance the command line pointer
+         STACK MF=(E,IOPL),PARM=STPBAREA,ENTRY=CALLSTCK
+*        B     EXIT
+EXIT     L     13,4(,13)           Free the
+         LA    0,WASIZE             work area
+         FREEMAIN R,LV=(0),A=(11)
+         RETURN (14,12),RC=0         and return
+         EJECT
+         CNOP  0,8
+CALLPUTL BASR  15,0
+         SAVE  (14,1),,CALLPUTL
+         LA    15,72(,13)
+         ST    13,72+4(,13)
+         ST    15,8(,13)
+         LR    13,15
+         L     15,CVTPTR
+         L     15,CVTPUTL-CVTMAP(,15)
+         CALL  (15),MF=(E,(1))
+         L     13,4(,13)
+         RETURN (14,1),RC=(15)
+         SPACE 1
+         CNOP  0,8
+CALLSTCK BASR  15,0
+         SAVE  (14,1),,CALLSTCK
+         LA    15,72(,13)
+         ST    13,72+4(,13)
+         ST    15,8(,13)
+         LR    13,15
+         L     15,CVTPTR
+         L     15,CVTSTCK-CVTMAP(,15)
+         CALL  (15),MF=(E,(1))
+         L     13,4(,13)
+         RETURN (14,1),RC=(15)
+         SPACE 5
+XISTPB   STACK MF=L,STORAGE=(*-*,PROCL,PROMPT)
+         SPACE 1
+XINPSTPB STACK MF=L,STORAGE=(*-*,PROCL)
+         SPACE 1
+XINSTPB  STACK MF=L,STORAGE=(*-*,PROCN)
+         SPACE 1
+MSG01    DC    AL2(MSG01L,0),C'XI001E THERE NO COMMANDS TO EXECUTE IN T>
+               HE COMMAND LINE'
+MSG01L   EQU   *-MSG01
+         SPACE 1
+STPBTAB  DC    AL1(XICMD),AL4(XISTPB),AL1(XINCMD),AL4(XINSTPB),AL1(XINP>
+               CMD),AL4(XINPSTPB)
+STPBTABN EQU   (*-STPBTAB)/5
+         DC    0D'0'
+DLMTEST  DC    0XL256'0',(C'A'-X'40')X'00'
+         DC    9X'01',(C'J'-X'40'-(*-DLMTEST))X'00'
+         DC    9X'01',(C'S'-X'40'-(*-DLMTEST))X'00'
+         DC    8X'01',(C'A'-(*-DLMTEST))X'00'
+         DC    9X'01',(C'J'-(*-DLMTEST))X'00'
+         DC    9X'01',(C'S'-(*-DLMTEST))X'00'
+         DC    8X'01',(C'0'-(*-DLMTEST))X'00'
+         DC   10X'01',(256-(*-DLMTEST))X'00'
+         LTORG ,
+         DC    0D'0'
+         EJECT
+         PRINT NOGEN
+         IKJCPPL ,
+RCBUF    EQU   6+(CPPLCBUF-CPPL)/4
+RPSCB    EQU   6+(CPPLPSCB-CPPL)/4
+RECT     EQU   6+(CPPLECT-CPPL)/4
+RUPT     EQU   6+(CPPLUPT-CPPL)/4
+         SPACE 2
+         IKJSTPB
+         DS    0D
+STPBSIZE EQU   *-STPB
+         SPACE 2
+         IKJLSD
+         DS    0D
+LSDSIZE  EQU   *-LSD
+LSDSP    EQU   78
+         SPACE 2
+         IKJIOPL
+ECB      DS    F
+OLD      DS    3A
+PUTLPBS  PUTLINE MF=L
+PUTLPB   EQU   PUTLPBS,*-PUTLPBS
+STPBAREA DS    XL(STPBSIZE)
+FLAG     DS    AL1
+XICMD    EQU   X'80'
+XINPCMD  EQU   X'C0'
+XINCMD   EQU   X'08'
+XDLM     EQU   X'01'
+DLM      DS    C
+SAVEAREA DS    (2*9)D
+WASIZE   EQU   *-IOPL
+         SPACE 2
+         CVT   DSECT=YES
+         END   XI

@@ -1,0 +1,14 @@
+** Copy this member to the SYS1.HELP data set
+)F Function -
+  Use the TIOT command to list the TIOT control block for your TSO
+  session.
+)X Syntax -
+ TIOT FILE('ddd')/DDNAME('ddd')  DATASET('ds')/DSNAME('ds')
+
+  Required - None
+  Defaults - If no operands are specified the entire TIOT is listed.
+)O Operands -
+))FILE('ddd') - Specify a DD name to list.
+))DDNAME('ddd') - Specify a DD name to list.
+))DATASET(('ds') - Specify a data set name to list.
+))DSNAME('ds') - Specify a data set name to list.

@@ -1,0 +1,152 @@
+The XI TSO command (and its related aliases, XIN and XINP)
+provide a TSO command line user a means to enter several TSO
+commands on a single TSO command line.  For example -
+
+xi dsstat xi.cbt.pds\listd xi.cbt.pds
+ dsstat xi.cbt.pds
+ SMYERS.XI.CBT.PDS
+ --UNIT---DEVICE---VOLUME--RECFM--LRECL--BLKSIZE--DSORG--ALLOCATED--USED
+   510B   3390     CBTSTG  FB        80    3200    PO         15       1
+ --ALLOCATED--LAST USED---EXPIRES--ALTERED
+    07/04/21  07/04/21     ------    YES
+ listd xi.cbt.pds
+ SMYERS.XI.CBT.PDS
+ --RECFM-LRECL-BLKSIZE-DSORG
+   FB    80    3200    PO
+ --VOLUMES--
+   CBTSTG
+ READY
+
+The original inspiration for XI was PCF.  Among its many alleged
+features was command stacking, but, sadly, there were problems -
+
+ - Frequently, it didn't work.
+ - It interfered with the one command stacking feature in base
+   TSO: the AT subcommand in TSO TEST permits TSO TEST subcommands
+   to be stacked using the ; character as the delimiter:
+   AT ... (command;command;...)
+   With PCF installed, since PCF also used ; to delmit commands,
+   PCF took the ; to indicate a new complete command, so what
+   TSO TEST eventually saw was the truncated AT command
+   followed by the commands.
+
+Something better was needed.
+
+                             U S I N G   X I
+
+At least in concept, XI is very simple.
+
+XI TSO command\TSO command\...\TSO command
+
+The commands are separated by the \ character, but many other
+characters can be used.  You specify the alternate separator
+character by inserting it just before the first TSO command.
+
+XI #TSO command#TSO command
+
+or even XI ;TSO command;TSO command
+
+Why the \ character?  It was close to the 3270 "Field Mark" key,
+and existed on most, if not all, teleprinter (e.g. the IBM 2741)
+keyboards, so it could be used across terminals.  Finally, it was
+rarely, if ever, used in TSO commands.
+
+xi e xitest da new\s\del *\end s
+ e xitest da new
+ INPUT
+ 00010
+ 00020
+ s
+ del *
+ NO LINES IN DATA SET
+ end s
+ SAVED, DATA SET IS EMPTY
+ READY
+
+This XI command is a quick and dirty way to initialize a small
+empty data set.  The DCB reflects 1972 attitudes about data set
+attributes, but it's not THAT bad.  What actually happened?  The
+old line mode EDIT command determined userid.XITEST.DATA did not
+exist and prompted the terminal operator for input.  The terminal
+operator entered a blank for line 00010 and nothing for line
+00020.  This caused EDIT to continue executing the commands; it
+saved the one line data set, deleted the one line and saved an
+empty data set.
+
+There is no practical limit in XI about the size of the command
+buffer it can build; the only limit is in the TMP about the
+maximum size of the command buffer the TSO GETLINE service can
+handle.
+
+                    H O W   D O E S   X I   W O R K ?
+
+XI does not parse the commands and run the command as a
+subroutine.  Rather, it uses the TSO STACK macro to pass the
+commands in a command buffer for the Terminal Monitor Program or
+command processor to execute after the XI command terminates.
+In other words, it is a simplistic CLIST precessor.
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+LINK     - Binder control statements used to prepare the XI
+           load module
+OBJECT   - Object "deck" prepared by assembling the XI22 source
+           module.
+XI22     - Assembler source for the XI, XIN and XINP commands
+
+        P R E P A R I N G   T H E   X I   L O A D   M O D U L E
+
+The intent of the installation is to prepare a library,
+userid.XI.LOAD from the object "deck" and Binder control
+statements in this data set.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..XI.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,hlq.XI.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,VOL=REF=*.SYSLIN,DSN=hlq.XI.CBT.PDS(LINK)
+
+TSO -
+
+DELETE XI.LOAD
+LINK ('hlq.XI.CBT.PDS(OBJECT)' 'hlq.XI.CBT.PDS(LINK)') RENT REFR REUS
+LOAD(XI)
+
+If you plan to install XI into a library with other programs,
+remove the PREP step and update the DD statement with DD name
+SYSLMOD to specify the correct library in the LINK step; or if
+you are using the TSO commands, remove the DELETE command and
+alter LOAD(XI) in the LINK command to specify the correct
+library.
+
+                           T E S T I N G   X I
+
+Make the library containing the XI load module availlable to your
+TSO session using the TSOLIB command or an equivalent facility.
+
+TSOLIB ACT DA(XI.LOAD)
+xi ...
+
+There are three XI commands.
+
+                              Allow prompting for
+             Echo             missing or invalid
+Command      Commands         operands
+-------      --------         -------------------
+XI           Yes              Yes
+XIN          No               No
+XINP         Yes              No
+
+                        I N S T A L L I N G   X I
+
+You can install XI in any convenient link list library, or in
+MLPA or the LPA.  The XI load module is very small, and normally
+loads above the 16 meg line.

@@ -1,0 +1,111 @@
+The TIOT TSO line mode command lists the entire TIOT, or selected
+DD entries.  In addition to the TIOT, TIOT lists the data set
+associated with each DD statement and the current EXCP coount for
+the DD statement.
+
+Command line -
+
+TIOT  FILE('xxx')/DDNAME('xxx')  DATASET('ddd')/DSNAME('ddd')
+  Required - Nothing
+  Defaults - None
+
+FILE('xxx') - Specify a DD name or the first characters of a
+  DD name to report.
+DDNAME('xxx') - Specify a DD name or the first characters of a
+  DD name to report.
+DATASET('ddd') - Specify a data set name; TIOT will report any
+  DD statements that are allocated to the data set.
+DSNAME('ddd') - Specify a data set name; TIOT will report any
+  DD statements that are allocated to the data set.
+
+                              E X A M P L E S
+
+tiot dsn(load)
+ SMYERS QCBTPROC QCBTPROC
+ SYSLIB   5103 CBT004 0 SMYERS.LOAD
+ SYS00047 5103 CBT004 43 SMYERS.LOAD
+ READY
+
+Datsset userid.LOAD is allocated to two DD statements: SYSLIB and
+SYS00047.  The SYS00047 allocation had 43 EXCPs issued to it at the
+time the TIOT command executed.
+
+tiot f(isp)
+ SMYERS QCBTPROC QCBTPROC
+ ISPPROF  5103 CBT004 79 SMYERS.ISPF.ISPPROF
+ ISPTABL  5103 CBT004 0 SMYERS.ISPF.ISPPROF
+ ISPLLIB  512A CBTRES 0 SYS1.DGTLLIB
+          512A CBTRES 0 GIM.SGIMLMD0
+ ISPILIB  512A CBTRES 0 ISP.SISPSAMP
+ ISPPLIB  5104 CBT005 12 CBT001.U.PANELS
+          501D CBTCAT 0 ISSI.SISPPENU
+...
+ ISPMLIB  501D CBTCAT 0 ISSI.SISPMENU
+          512A CBTRES 22 ISF.SISFMLIB
+...
+ ISPTLIB  5103 CBT004 3 SMYERS.ISPF.ISPPROF
+          501D CBTCAT 0 ISSI.SISPTENU
+...
+ ISPSLIB  5104 CBT005 0 CBT001.U.SKELS
+          512A CBTRES 0 ISP.SISPSLIB
+...
+
+The output is incomplete, on purpose.
+
+tiot f(sysprint
+ SMYERS QCBTPROC QCBTPROC
+ SYSPRINT TERM
+ READY
+
+Codes are used in place of the address, where required.  In this TSO
+session, DD nme SYSPRINT is allocated to the terminal.
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+LINK     - Binder control statements
+OBJECT   - Object "deck" from assembling the source
+SOURCE   - Assembler source for the TIOT TSO command
+TIOT     - Help text for the TIOT command
+
+      P R E P A R I N G   T H E   T I O T   L O A D   M O D U L E
+
+Both the batch and TSO codes prepare a userid.TIOT.LOAD data set;
+hlq.TIOT.CBT.PDS represents this data set in both the batch and
+TSO examples.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID.TIOT.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//LIB      DD  DISP=SHR,DSN=hLq.TIOT.CBT.PDS
+//SYSLIN   DD  *
+ INCLUDE LIB(OBJECT,LINK)
+
+TSO -
+
+Type the INCLUDE statement when the LINK command prompts for it.
+DELETE TIOT.LOAD
+ALLOC F(LIB) SHR REUS DA('hlq.TIOT.CBT.PDS')
+LINK * LOAD(TIOT) RENT REFR REUS
+INCLUDE LIB(OBJECT,LINK)
+
+If you are storing the TIOT load module in a data set with other
+programs, remove the PREP step in the batch JCL, and update the
+DD statement with DD name SYSLMOD in the LINK  step as required.
+Similarly, in the TSO commands remove the DELETE command and
+update the LOAD(TIOT) operand in the LINK command.
+
+                        T E S T I N G   T I O T
+
+Use the TSOLIB command (or an equivalent facility) to make the TIOT
+command available to your session.
+
+TSOLIB ACT DATASET(TIOT.LOAD)
+

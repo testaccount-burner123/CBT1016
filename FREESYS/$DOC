@@ -1,0 +1,87 @@
+The FREESYS TSO command frees all allocations with DD name
+SYSnnnnn, where nnnnn is 5 digits.  Many TSO commands allocate
+data sets and request the system to assign a DD name for the
+allocation.  These allocations are assigned DD name SYSnnnnn.
+Some processors never bother to free the allocation; the LINK and
+LOADGO commands are particularly bad in this regard.  FREESYS
+examines the allocations as defined in the TIOT.  Each allocation
+must pass several tests:
+
+- The DD name must be SYSnnnnn
+- The allocation must not be part of a concatenation
+- The DD name must not be open in any task in the TSO session
+
+FREESYS was written as a TSO command processor.  It can be used
+as though it were a batch program, though this has not been
+formally tested.
+
+       U S I N G   F R E E S Y S   A S   A   T S O   C O M M A N D
+
+FREESYS
+
+Required - Nothing
+Defaults - Nothing
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+FREESYS  - The Assembler source statements for the FREESYS TSO
+           command
+LINK     - Binder control statements used to prepare the FREESYS
+           load module
+OBJECT   - Object "deck" prepared by using the source statements
+           in member FREESYS
+
+   P R E P A R I N G   T H E   F R E E S Y S   L O A D   M O D U L E
+
+The JCL or TSO statements that follow prepare a data set
+userid.FREESYS.LOAD.  Data set hlq.FREESYS.CBT.PDS represents
+this data set.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..FREESYS.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.FREESYS.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.FREESYS.CBT.PDS(LINK)
+
+TSO --
+
+DELETE FREESYS.LOAD
+LINK ('hlq.FREESYS.CBT.PDS(OBJECT)' 'hlq.FREESYS.CBT.PDS(LINK)')
+RENT REFR REUS LOAD(FREESYS)
+
+If you want to install FREESYS in a library with other programs,
+remove the PREP step in the batch JCL, and update the DD
+statement with DD name SYSLMOD to specify the library you want to
+use.  Similarly, for TSO, remove the DELETE command and change
+LOAD(FREESYS) in the LINK command to specify the library where
+you want to install FREESYS.
+
+                  T E S T I N G   F R E E S Y S
+
+Make the library where you installed FREESYS available to your
+TSO session using the TSOLIB or some equivalent facility.
+
+TSOLIB ACT DATASET(FREESYS.LOAD)
+
+Then enter the FREESYS command.  FREESYS will issue messages
+showing the DD names it unallocated.  If z/OS dynamic allocation
+encounterd a problem, FREESYS will issue appropriate messages.
+
+              I N S T A L L I N G   F R E E S Y S
+
+FREESYS can be installed in any convenient LINKLIST library or in
+MLPA or LPA by copying the FREESYS load module to the appropriate
+library.  FREESYS is very small and loads above the 16 meg line
+so it will have no impact on below the line storage.
+
+                              S U P P O R T
+
+Contact the author at mvsprog@yahoo.com

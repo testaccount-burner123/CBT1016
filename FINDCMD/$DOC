@@ -1,0 +1,110 @@
+FINDCMD is a TSO line mode command to locate the library where a
+program (TSO command) is located.  For example -
+
+findcmd findcmd
+ FINDCMD IN SYS00561 SMYERS.FINDCMD.LOAD
+ READY
+findcmd iefactrt
+ IEFACTRT IN MLPA
+ READY
+findcmd idcams
+ IDCAMS IN LINKLIST SYS1.LINKLIB
+ READY
+findcmd e
+ E IN LINKLIST SYS1.CMDLIB
+ READY
+findcmd ifox00
+ IFOX00 IN STEPLIB SYS1.CBT.LINKLIB
+ READY
+findcmd asma90
+ ASMA90 IN LINKLIST ASM.SASMMOD1
+ READY
+findcmd makepc
+ MAKEPC IN SYSPROC SMYERS.CLIST
+ READY
+findcmd e
+ E IN LINKLIST SYS1.CMDLIB
+ READY
+
+Programs can be in many places.  In this particular environment,
+the FINDCMD program is in a library established by the TSOLIB
+command.
+
+FINDCMD searches for a program in many places.
+
+ * First, it searches the MLPA and LPA.  No I/O is required to
+   search for an in storage program.
+ * It uses the BLDL macro to search the JOBLIB or STEPLIB,
+   which ever is active, followed by the LINK LIST.  In z/OS
+   systems, no I/O is required to search the link list, but I/O
+   is required for JOBLIB/STEPLIB.
+ * If the SYSPROC DD statement is available, FINDCMD opens SYSPROC
+   and searches it for the program.
+ * If the SYSEXEC DD statement is available, FINDCMD opens SYSEXEC
+   and searches it for the program.
+
+The z/OS search order is somewhat different: FINDCMD tries to
+minimize I/O; z/OS wants to load a program from JOBLIB/STEPLIB if
+possible, even if the program is in MLPA or LPA.
+
+In the previous paragraph I used JOBLIB/STEPLIB.  Only one can be
+active; STEPLIB, if it is specified will be used in place of
+JOBLIB.
+
+Especially in TSO, other libraries can be used: the TSOLIB
+command can specify libraries, as can the TASKLIB parameter in
+the ATTACH macro.  This possible multitude of JOBLIBs presents a
+problem for something like FINDCMD.  BLDL returns a flag that
+says JOBLIB, but no clue as to which JOBLIB/STEPLIB.  FINDCMD
+uses BLDL to search every JOBLIB, as defined in TCBJLB, for
+every task up to the job step TCB, until BLDL finds a JOBLIB
+DCB that contains the program.
+
+                       C O M M A N D   S Y N T A X
+
+FINDCMD 'program name'
+
+Required - program name
+Default - None
+
+            C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member.
+FINDCMD  - Help text to copy to SYS1.HELP.
+LINK     - Binder control statements to prepare the FINDCMD
+           load module.
+OBJECT   - Object "deck" created by assembling the contents of
+           the SOURCE member.
+SOURCE   - Assembler source statements for FINDCMD.
+
+   P R E P A R I N G   T H E   F I N D C M D   L O A D   M O D U L E
+
+The JCL or TSO commands that follow prepare the FINDCMD load
+module in userid.FINDCMD.LOAD.  To prepare the FINDCMD load
+module in a library with other programs, remove the PREP step in
+the JCL, and alter the DD statement with DD name SYSLMOD in the
+LINK step to specify the library where you wish to install
+FINDCMD.  Similarly, for TSO, remove the DELETE command and and
+alter the LOAD(FINDCMD) parameter in the LINK command to specify
+the library you want to use.  hlq.FINDCMD.CBT.PDS represents this
+data set; substitute the data set name you are using.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..FINDCMD.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.FINDCMD.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,VOL=REF=*.SYSLIN,
+//             DSN=hlq.fINDCMD.CBT.PDS(OBJECT)
+
+TSO -
+
+DELETE FINDCMD.LOAD
+LINK ('hlq.FINDCMD.CBT.PDS(OBJECT)' 'hlq.FINDCMD.CBT.PDS(LINK)')
+RENT REFR REUS

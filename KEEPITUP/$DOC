@@ -1,0 +1,123 @@
+KEEPITUP keeps a TSO session alive even if there is no terminal
+activity.  While KEEPITUP is running, the keyboard is "locked" so
+that messages entered using, SEND 'text' USER(your userid) or the
+equivalent operator SEND command will display on your terminal.
+
+Many installations discourage, or even forbid, the use of tools
+like KEEPITUP, so check with your management before installing or
+using KEEPITUP.
+
+The primary advantage of using KEEPITUP is that an analyst
+responsible for analyzing system problems can very often regain
+use of their TSO session by attentioning out of KEEPITUP even if
+it is not possible to logon to the system.
+
+KEEPITUP command syntax -
+
+KEEPITUP  MAXWAIT('maximum wait time, in minutes')
+          INTERVAL('time between screen updates, in minutes')
+          LONGHEADER/LONGHDR/LH
+
+Defaults - MAXWAIT(5)  INTERVAL(60)
+
+MAXWAIT specifies the maximum number of minutes KEEPITUP will
+wait at one time.  It cannot be greater than the SMF JWT value,
+for obvious reasons.
+
+INTERVAL specifies the number of minutes between KEEPITUP screen
+updates.  The value you specify must be divisible for 24 hours.
+1440/60 does not produce a remainder so it is valid; 1440/65
+produces a remainder, so KEEPITUP will reject the value and
+prompt the terminal operator for a valid value,
+
+LONGHEADER, LONGHDR and LH are aliases of the same concept; KEEPITUP
+writes a longer heading line.  The longer heading displays the values
+specified for MAXWAIT and INTERVAL.
+
+KEEPITUP clears the screen and displays a header line -
+
+KEEPITUP RUNNING FOR SMYERS STARTED AT  1:19 PM ON WEDNESDAY SEPTEMBER 1
+
+On its initial entry, KEEPITUP displays its header line and a
+detail line -
+
+KEEPITUP RUNNING FOR SMYERS STARTED AT  1:19 PM ON WEDNESDAY SEPTEMBER 1
+IT IS WEDNESDAY, SEPTEMBER 15, 2021  1:19:23 PM (21.258) 1 D 1 H 35 M 5S
+
+The detail line is repeated every INTERVAL minutes, on the interval
+time, so, using this as as an example, with the default INTERVAL
+time, KEEPITUP will display the next detail line at 2:00:00 PM and
+so on.
+
+The 1 D 1 H 25 M 5 S is the time the TSO user has been logged in;
+1 day, 1 hour, 25 minutes, 5 seconds.
+
+KEEPITUP was designed to clear the screen, repeat the header line,
+and display the next detail line when the screen filled up, but
+this does not seem to work.
+
+When it starts, KEEPITUP runs a TSO command called CLRSCRN.
+CLRSCRN is provided as part of ISPF.
+
+           C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+JCL      - JCL to assemble and link KEEPITUP and its statically
+           linked functions.
+KEEPITUP - Source for the KEEPITUP command processor
+MINIFMT  - A program to format messages.
+OBJECT   - Object "decks" for the programs.
+SMFETIME - A program to calculate the elapsed time between two
+           SMF date/time pairs
+WEEKDAY  - A very small program to determine the day of week using
+           the time of day clock.
+
+   P R E P A R I N G   T H E   K E E P I T U P   L O A D   M O D U L E
+
+The batch JCL or TSO commands that follow will prepare the
+KEEPITUP load module in userid.KEEPITUP.LOAD.
+hlq.KEEPITUP.CBT.PDS refers to this data set.
+
+Batch --
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MODS,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..KEEPITUP.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,XREF,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.KEEPITUP.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.KEEPITUP.CBT.PDS(LINK)
+
+TSO --
+DELETE KEEPITUP.LOAD
+LINK ('hlq.KEEPITUP.CBT.PDS(OBJECT)' 'hlq.KEEPITUP.CBT.PDS(LINK)')
+  RENT REFR REUS LOAD(KEEPITUP)
+
+Enter the LINK command as a long string at the TSO READY prompt
+or in the ISPF Command Shell, usually option 6 in the ISPF
+Primary Options menu.
+
+                     T E S T I N G   K E E P I T U P
+
+Make the KEEPITUP command available to your TSO session using
+TSOLIB or any dynmic STEPLIB facility available to you:
+
+TSOLIB ACTIVE DATASET(KEEPITUP.LOAD)
+
+Enter the KEEPITUP command
+
+KEEPITUP INTERVAL(1)
+
+KEEPITUP will clear your screen and display the header line and
+the first status line.  It will repeat the status line every
+minute, on the minute.  You can exit KEEPITUP by entering an
+attention as defined by your terminal emulator program: the Esc
+key is the most common attention key, though your terminal
+emulator may be different.
+
+                  I N S T A L L I N G   K E E P I T U P
+
+You can install KEEPITUP in any convenient link list library.  It
+can also be installed in MLPA or LPA.

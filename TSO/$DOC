@@ -1,0 +1,70 @@
+TSO is a line mode command processor to resolve a problem that
+causes difficulties with many TSO ternminal operators.  In ISPF,
+a TSO terminal operator can execute a regular TSO line mode
+command by typing TSO command in the Command area in many ISPF
+panels.  All to often this extends to entering commands at the
+TSO READY prompt and results in the COMMAND TSO NOT FOUND
+message.  About all the TSO terminal operator can do is curse and
+retype the command without the TSO.
+
+The TSO command "cures" this problem.  It forms a proper command
+line without the TSO command and uses the STACK service to queue
+the command.  TSO does not execute the command directly; it
+just prepares the Terminal Monitor Program to run the command
+after TSO terminates.  The command can be an authorized command
+validated using standard TSO facilities.
+
+          C O N T E N T S   O F   T H I S   D A T A   S E T
+
+Member
+$DOC     - This member
+LINK     - Linkage Editor (or Binder) control statements
+OBJECT   - The binary object from assembling the TSO member
+TSO      - The TSO command processor
+
+        P R E P A R I N G   T H E   T S O   L O A D   M O D U L E
+
+The batch JCL or TSO commands that follow prepare the TSO command
+in a data set named userid.TSO.LOAD.  In order to add the command
+to an existing data set, remove the PREP step or DELETE command
+in the TSO commands, and alter the SYSLMOD DD statement in the
+LINK step, or the LOAD parameter in the LINK TSO command.  Data
+set hlq.TSO.CBT.PDS refers to this daa set.
+
+Batch -
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID...TSO.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.TSO.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.TSO.CBT.PDS(LINK)
+
+TSO -
+DELETE LMATTR.LOAD
+LINK ('hlq.TSO.CBT.PDS(OBJECT)' 'hlq.TSO.CBT.PDS(LINK)') RENT REFR REUS
+LOAD(LMATTR)
+
+You can enter the LINK command as one long string in most
+environments, including the READY prompt or ISPF option 6 (ISPF
+Command Shell).
+
+             T E S T I N G   T H E   T S O   C O M M A N D
+
+First. using the TSO TSOLIB command make the userid.TSO.LOAD data set
+available to TSO -
+
+TSOLIB ACTIVATE DATASET(TSO.LOAD)
+
+Then enter
+
+TSO TSO COMMAND
+
+           I N S T A L L I N G   T H E   T S O   C O M M A N D
+
+You can install the TSO command in any convenient library in your
+link list, or into LPA.  The command processor is AMODE 31, RMODE
+ANY, so it will load above the 16meg line and not affect your
+below the line storage.

@@ -1,0 +1,202 @@
+The IDUMP command formats the contents of a data set to a dump
+format readily usable to a TSO user.  For example
+
+****************************** SMYERS.IDUMP.LOAD *******************************
+
+RUN AT 06/28/21 14:41
+
+DATA SET EXTENTS --
+0000 01B00001 01B00001 000001
+
+DUMPED EXTENTS --
+0000     1 01B00001 01B00001
+
+     **** TRACK 000000       0 ****
+
+  ** COUNT 01B0000101080100   TTR 00000001 **
+
+0000     0  FFFFFFFF FFFFFFFF                     *........        *
+
+0000     0  0032C9C4 E4D4D740  40400000 042C0000  *..IDUMP   ......*
+0010    16  09000000 0000C2E3  00263826 38000000  *......BT........*
+0020    32  88000101 0000FFFF  FFFFFFFF FFFF0000  *h...............*
+0030    48  00000000 00000000  00000000 00000000  *................*
+            ONE OR MORE LINES SAME AS PREVIOUS LINE
+00F0   240  00000000 00000000  00000000 00000000  *................*
+
+  ** COUNT 01B0000102080100   TTR 00000002 **
+
+0000     0  00000000 00000000                     *........        *
+
+0000     0  00000000 00000000  00000000 00000000  *................*
+            ONE OR MORE LINES SAME AS PREVIOUS LINE
+00F0   240  00000000 00000000  00000000 00000000  *................*
+
+  ** COUNT 01B0000103000000   TTR 00000003 **
+
+  ** COUNT 01B0000104000068   TTR 00000004 **
+
+0000     0  20800000 00010060  C9C4E4D4 D7404040  *.......-IDUMP   *
+0010    16  00000000 00001F9C  D8E2D6D9 E3D34040  *........QSORTL  *
+0020    32  03002518 07000005  C9C4D7C3 D3404040  *........IDPCL   *
+0030    48  00001FA0 000001CD  C9C4E4D4 D7D4E2C7  *........IDUMPMSG*
+0040    64  00002170 000002BF  D8E2D6D9 E3E24040  *........QSORTS  *
+0050    80  00002430 0F000208  D8E2D6D9 E3404040  *........QSORT   *
+0060    96  03002468 07000005                     *........        *
+
+  ** COUNT 01B00001050000FB   TTR 00000005 **
+
+0000     0  80FA0100 00000000  00000000 00000000  *................*
+0010    16  00000000 00000000  00000000 00000000  *................*
+            ONE OR MORE LINES SAME AS PREVIOUS LINE
+00F0   240  00000000 00000000  000000             *...........     *
+
+  ** COUNT 01B0000106000016   TTR 00000006 **
+
+0000     0  801502F5 F6F9F5D7  D4C2F0F1 40020421  *...5695PMB01 ...*
+0010    16  179F0132 243F                         *......          *
+
+  ** COUNT 01B000010700002B   TTR 00000007 **
+
+0000     0  802A8400 01000380  0400F5F6 F9F6F2F3  *..d.......569623*
+0010    16  F4F0F040 01062117  9F800500 F5F6F9F6  *400 ........5696*
+0020    32  F2F3F4F0 F0400106  17242F             *23400 .....     *
+
+  ** COUNT 01B0000108000020   TTR 00000008 **
+
+0000     0  01000001 00100000  06000000 40002638  *............ ...*
+0010    16  00011FA0 000301D0  000402C0 00050208  *................*
+
+  ** COUNT 01B0000109002638   TTR 00000009 **
+
+0000     0  47F0F022 1CC9C4E4  D4D740E5 F1D3F340  *.00..IDUMP V1L3 *
+0010    16  606040F0 F661F2F8  61F2F140 F1F34BF2  *-- 06/28/21 13.2*
+            ...
+2630  9776  00002468 00000003                     *........        *
+
+  ** COUNT 01B000010A0000B8   TTR 0000000A **
+
+0000     0  0E000000 000000A8  00000000 00000000  *.......y........*
+            ...
+00B0   176  00050005 0C002630                     *........        *
+
+  ** COUNT 01B000010B000000   TTR 0000000B **
+
+IDUMP permits a curious user to see exactly what his data looks
+like on the disk, warts and all.
+
+System/360 and its successor systems use a disk encoding system
+called count-key-data.  All data records are encoded as at least
+two data segments; a count area and its related data area.
+Records encoded with a key used to identify the record have three
+record segments: the count, key and data segments.
+
+IDUMP writes most of its output to a data set specified in the
+command line rather than to the terminal.  A TSO user can easily
+browse the data set or even print it.
+
+                       C O M M A N D   S Y N T A X
+
+IDUMP  'dataset'  PRINT('output data set')/OUTPUT('output data set')/
+                  LIST('output data set')
+                  TT('staring relative track':'ending relative track')
+                  CCHH('starting track':'ending track')
+                  MOD/EXTEND  HA/NOHA  R0/NOR0  VOLUME('vvvvvv')
+                  COMBINEKEY/NOCOMBINEKEY
+
+Required - 'dataset'
+Defaults -
+  PRINT(IDUMP.OUTPUT)  NOHA  NOR0  NOCOMBINEKEY
+
+'dataset' - Specify the name of the data set containg the data IDUMP
+   is to analyze.  To dump a VTOC, specify 'vtoc' VOL(vvvvvv) where
+   vvvvvv is the volume.
+
+PRINT('output data set') - Use the PRINT, OUTPUT or LIST keywords
+OUTPUT('output data set')  to specify the data set where IDUMP
+LIST('output data set')    directs its output.  The default is
+                           userid.IDUMP.OUTPUT.
+
+TT('staring relative track':'ending relative track')/
+CCHH('starting track':'ending track')
+
+Use TT or CCHH to select individual tracks within the data set to
+dump.
+
+MOD/EXTEND - Add the output to the end of an existing print data
+set.
+
+HA/NOHA - Spefify HA to dump the first 8 bytes of the home address
+record for the track
+
+R0/NOR0 - Dump the contents of the R0 record for the track.  The
+R0 record is normally an 8 byte record used as a marker, like the
+home address record, to mark the start of a track.  Programs that
+format a record 1 search for the R0 to start the channel program.
+
+COMBINEKEY/NOCOMBINEKEY - When dumping records with a key,
+specify COMBINEKEY to dump the key with the data portion of the
+record.  COMBINEKEY usually works best with VTOC records, and may
+work well wuth true ISAM data sets.
+
+                   D A T A   S E T   C O N T E N T S
+
+Member
+$DOC     -- This member
+IDUMP    -- Help text to transfer to SYS1.HELP
+LINK     -- Binder control statements
+OBJECT   -- Object "decks" for the IDUMP and QSORTS external
+            modules.
+SOURCE   -- Source code for IDUMP and QSORTS external function.
+            Use the High Level Assembler BATCH option when
+            assembling the source.
+
+                     I N S T A L L I N G   I D U M P
+
+In these instructions, hlq.IDUMP.CBT.PDS represents this data set.
+
+The immediate goal is to prepare a load module in a data set,
+userid.IDUMP.LOAD
+
+Batch --
+
+//PREP    EXEC PGM=IEFBR14
+//SYSLMOD  DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..IDUMP.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,LIST,RENT,REFER,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSUT1   DD  UNIT=SYSDA,SPACE=(CYL,(1,1))
+//SYSLMOD  DD  DISP=(,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.SYSLMOD
+//SYSLIN   DD  DISP=SHR,DSN=hlq.IDUMP.CBT.PDS(OBJECT)
+//         DD  DISP=SHR,VOL=REF=*.SYSLIN,
+//             DSN=hlq.IDUMP.CBT.PDS(LINK)
+
+If you intend to install IDUMP in a library with other programs,
+delete the PREP step and alter the DD statement with DD name
+SYSLMOD to specify the correct library.
+
+TSO -
+
+Enter the following TSO commands at the TSO READY prompt or in
+ISPF option 6.
+
+DEL IDUMP.LOAD
+LINK ('hlq.IDUMP.CBT.PDS(OBJECT)' 'hlq.IDUMP.CBT.PDS(LINK)')
+LOAD(IDUMP) RENT REFR REUS
+
+As with the batch, if you intend to install IDUMP into a library
+with other programs, do not use the DELETE command, and change
+the LOAD(IDUMP) operand on the LINK command to specify the
+library where you want to install IDUMP.
+
+                        T E S T I N G   I D U M P
+
+Use the TSOLIB command or any similar facility to add the library
+where you installed IDUMP to the standard program fetch for your
+TSO session, then run IDUMP either from ISPF option 6 or the TSO
+READY prompt -
+
+TSOLIB ACT DA(IDUMP.LOAD)
+IDUMP IDUMP.LOAD
+

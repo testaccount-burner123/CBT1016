@@ -1,0 +1,64 @@
+The LISTTSOU command lists the TSO users currently using the system.
+For example -
+
+listtsou asid
+ THE FOLLOWING TSO USERS ARE CURRENTLY ACTIVE -
+  BENMAR(X'003E') SMYERS(X'002D')
+
+Command Syntax -
+
+LISTTSOU  ASID SORT(USERID/ASID)  VERSION
+
+Required - Nothing
+Default - SORT(USERID)
+
+ASID - List the ASID assigned to the TSO user.
+
+SORT(USERID/ASID) - The SORT keyword specifies the order the users
+are listed by LISTTSOU.  SORT(ASID) does not imply the ASID list
+option.
+
+VERSION - Display the LISTTSOU command verion in message LTSU003I
+
+    P R E P A R E   T H E   L I S T T S O U   L O A D   M O D U L E
+
+The following batch or TSO statements prepare the LISTTSOU load
+module in userid.LISTTSOU.LOAD.  They delete and reallocate the
+data set.  To create the LISTTSOU load module in a data set
+with other TSO commands or programs, do not delete the data set
+and alter the DD statement with DD name SYSLMOD in the LINK step
+or LOAD(LISTTSOU) in the LINK command.  hlq.LISTTSOU.CBT.PDS
+refers to this data set.
+
+Batch -
+
+//PREP    EXEC PGM=IEFBR14
+//LISTTSOU DD  DISP=(MOD,DELETE),UNIT=SYSALLDA,SPACE=(TRK,0),
+//             DSN=&SYSUID..LISTTSO.LOAD
+//LINK    EXEC PGM=IEWL,PARM='MAP,LIST,RENT,REFR,REUS'
+//SYSPRINT DD  SYSOUT=*
+//SYSLMOD  DD  DISP=(NEW,CATLG),UNIT=SYSDA,SPACE=(TRK,(1,1,1)),
+//             DSN=*.PREP.LISTTSOU
+//SYSLIN   DD  DISP=SHR,DSN=hlq.LISTTSOU.CBT.PFS(OBJECT)
+//         DD  DISP=SHR,DSN=hlq.LISTTSOU.CBT.PDS(LINK)
+
+TSO -
+
+DELETE LISTTSOU.LOAD
+LINK ('hlq.LISTTSOU.CBT.PDS(OBJECT)' 'hlq.LISTTSOU.CBT.PDS(LINK)')
+  LOAD(LISTTSOU) RENT REFR REUS
+
+                    T E S T I N G   L I S T T S O U
+
+Use the TSOLIB command or an equivalent facility to make LISTTSOU
+available to your TSO session -
+
+TSOLIB ACTIVATE DATASET(LISTTSOU.LOAD)
+
+Then enter the the LISTTSOU command.
+
+LISTTSOU
+
+                              S U P P O R T
+
+Contact the author at mvsprog@yahoo.com.

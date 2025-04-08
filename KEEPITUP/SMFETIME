@@ -1,0 +1,188 @@
+SMFETIME TITLE '       C O N V E R T   S M F   D A T E / T I M E   P A >
+               I R S   T O   E L A P S E D   T I M E'
+***********************************************************************
+*                                                                     *
+* Title -- SMFETIME                                                   *
+*                                                                     *
+* Function / Operation -- SMFETIME calculates the elapsed time        *
+*   between two SMF date/time pairs.  An SMF date time pair is an     *
+*   8 byte data area; the first 4 bytes are a binary time of day      *
+*   and the second 4 bytes are a date as a packed decimal number      *
+*   with the format P'0cyyddd'.  SMFETIME can handle dates that       *
+*   extend to a second year.  In other words, the start date          *
+*   can be in 2013 and the end date can be in 2014.                   *
+*                                                                     *
+*   SMFETIME verifies the input data is valid and reasonable.  The    *
+*   first 4 bytes must be between 0 and 8639999 (23:59:59.99), and    *
+*   the second 4 bytes must be packed decimal.                        *
+*                                                                     *
+* Calling Sequence --                                                 *
+*            CALL SMFETIME,(start,end,RESULT) (or equivalent)         *
+*            ...                                                      *
+*   start    DC   F'time-of-day',PL4'0cyyddd'                         *
+*   end      DC   F'time-of-day',PL4'0cyyddd'                         *
+*   RESULT   DC   F'elapsed-time'                                     *
+*                                                                     *
+* Status / Change Level --                                            *
+*  V1L2 April 2016                                                    *
+*   * Correct TRTTAB2, again                                          *
+*  V1L1 Jan 2016                                                      *
+*   * Correct TRTTAB2                                                 *
+*  V1L0 Feb 2014                                                      *
+*                                                                     *
+* Attributes -- SMFETIME is reenterable, refreshable and reusable.    *
+*   It operates in any AMODE and RMODE that is compatible with        *
+*   the caller; it is declared AMODE 31, RMODE ANY.  The result       *
+*   is in units of 1/100th of a second.  The progran operates in      *
+*   TCB mode, problem state and problem key.  Since it uses no        *
+*   external resources, its APF status is undefined.                  *
+*                                                                     *
+* Register 15 return code -                                           *
+*   0 -- The result area contains the elapsed time.                   *
+*   4 -- The input data is invalid.                                   *
+*        - The date areas are not packed decimal.                     *
+*        - The time of day values are not in the range of 0 to        *
+*          8639999.                                                   *
+*        The result overflowed the capacity of a 32-bit register;     *
+*        (248+ days).                                                 *
+*                                                                     *
+* Y2K -- SMFETIME is Y2K compliant.                                   *
+*                                                                     *
+* Y21K -- SMFETIME is Y21K compliant.                                 *
+*                                                                     *
+* Language Environment -- SMFETIME is LE compatible.  It saves and    *
+*   restores the program mask since it detects and responds to fixed  *
+*   point binary overflow. It does not alter registers 11 and 12.  It *
+*   is not LE compliant since it does not use full LE compliant entry *
+*   and exit conventions and does not obtain a proper DSA from the LE *
+*   stack.                                                            *
+*                                                                     *
+* Restrictions -- SMFETIME uses the TP instruction to test the date   *
+*   areas.  If the instruction is not available, SMFETIME will fail   *
+*   with an S0C1 ABEND; if the Assembler does not support the         *
+*   instruction the assembly will fail.  An alternate test using the  *
+*   TRT instruction and two translate and test tables is provided as  *
+*   comments.  This code has not been tested.                         *
+*                                                                     *
+*   SMFETIME requires z/Architecture level set 1.  This level set     *
+*   does not provide the TP instruction but does include the relative *
+*   branch instructions and immediate operand instructions.           *
+*                                                                     *
+*   SMFETIME saves the caller's program mask, sets the program mask   *
+*   to binary 0s, while it executes, and restores it before it exits. *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+SMFETIME RSECT                     DEFINE PROGRAM CSECT
+SMFETIME AMODE 31                  DEFINE PROGRAM AMODE
+SMFETIME RMODE ANY                 DEFINE PROGRAM RMODE
+WORKAREA DSECT                     DEFINE WORK AREA DSECT
+         ORG   WORKAREA+72-8       RESET POSITION TO THE SAVE AREA    ->
+                                    REGISTER 11 AREA
+DWORK    DS    D                   DEFINE A DOUBLE WORD WORK AREA
+SMFETIME RSECT                     RETURN TO THE PROGRAM CSECT
+         USING *,10                ESTABLISH PROGRAM ADDRESSABILITY
+         USING WORKAREA,13         ESTABLISH WORK AREA ADDRESSABILITY
+         SAVE  (14,10),,'SMFETIME &SYSDATE &SYSTIME'  SAVE REGISTERS
+         LR    10,15               COPY ENTRY POINT ADDRESS TO REG 10
+         IPM   5                   STORE THE PROGRAM MASK
+         ICM   14,B'1000',=AL1(0)  SET THE PROGRAM MASK
+         SPM   14                   WE WILL USE
+         LM    2,4,0(1)            LOAD THE PARAMETER LIST
+*        TRT   4(3,2),TRTTAB1      VERIFY
+*        JNZ   EXIT4                THE
+*        TRT   4(3,3),TRTTAB1        DATE
+*        JNZ   EXIT4                  AREAS
+*        TRT   7(1,2),TRTTAB2          CONTAIN
+*        JNZ   EXIT4                    PACKED
+*        TRT   7(1,3),TRTTAB2            DECIMAL
+*        JNZ   EXIT4                      DATA
+         TP    4(4,2)              TEST START DATE
+         JNZ   EXIT4               BR IF NOT PACKED DECIMAL
+         TP    4(4,3)              TEST END DATE
+         JNZ   EXIT4               BR IF NOT PACKED DECIMAL
+         ICM   0,B'1111',0(2)      LOAD STARTING TIME OF DAY
+         JM    EXIT4               BR IF BAD
+         ICM   1,B'1111',0(3)      LOAD ENDING TIME OF DAY
+         JM    EXIT4               BR IF BAD
+         C     0,=A(100*24*60*60)  TEST START TIME OF DAY
+         JNL   EXIT4               BR IF TOO HIGH
+         C     1,=A(100*24*60*60)  TEST END TIME OF DAY
+         JNL   EXIT4               BR IF TOO HIGH
+         CP    4(4,2),4(4,3)       TEST IF START DATE = END DATE
+         JNE   MDAYS               BR IF NOT
+         SR    1,0                 COMPUTE ELAPSED TIME
+         ST    1,0(,4)             STORE ELAPSED TIME
+         JM    EXIT4               BR IF BAD
+         J     EXIT0               EXIT WITH A SMILE
+MDAYS    ZAP   DWORK,4(4,2)        CONVERT START DATE
+         CVB   7,DWORK              TO BINARY
+         ZAP   DWORK,4(4,3)        CONVERT END DATE
+         CVB   9,DWORK              TO BINARY
+         SR    6,6                 SEPARATE
+         SR    8,8                  CYY
+         D     6,=F'1000'            AND
+         D     8,=F'1000'             DDD
+* REG CONTENTS
+*  6  DAY OF YEAR OF STARTING DATE
+*  7  CYY OF STARTING YEAR
+*  8  DAY OF YEAR OF ENDING DATE
+*  9  CYY OF ENDING YEAR
+         LR    1,9                 COPY END CYY TO REG 1
+         SR    1,7                 SUBTRACT END CYY FROM START CYY
+         JZ    SAMEYEAR            BR IF END CYY = START CYY
+         JM    EXIT4               BR IF END CYY < START CYY
+         CHI   1,1                 TEST IF END CYY = START CYY + 1
+         JNE   EXIT4               BR IF NOT
+* DETERMINE IF STARTING CYY REPRESENTS A LEAP YEAR.  THIS IS THE FULL
+* GREGORIAN LEAP YEAR CALCULATION.
+         LR    1,7                 COPY START CYY TO REG 1
+         AHI   1,1900              CONVERT START CYY TO TRUE YEAR
+         LR    14,1                COPY START YEAR TO REG 14
+         N     14,=A(B'11')        TEST IF POSSIBLE LEAP YEAR
+         JNZ   NOTLEAP             BR IF NOT A LEAP YEAR
+         LR    15,1                COPY START YEAR TO REG 15
+         D     14,=F'100'          DIVIDE START YEAR BY 100
+         LTR   14,14               TEST THE REMAINDER
+         JNZ   ISLEAP              BR IF START YEAR IS NOT A CENTURY  ->
+                                    YEAR
+         N     15,=A(B'11')        TEST IF START YEAR IS A CENTURY    ->
+                                    LEAP YEAR
+         JZ    ISLEAP              BR IF SO
+NOTLEAP  AHI   8,365               "NORMALIZE" THE END DAY OF YEAR
+         J     SAMEYEAR
+ISLEAP   AHI   8,366               "NORMALIZE" THE END DAY OF YEAR
+* NOW COMPUTE THE ELAPSED TIME
+SAMEYEAR CR    8,6                 COMPARE LAST DAY OF YEAR WITH      ->
+                                    FIRST DAY OF YEAR
+         JNH   EXIT4               BR IF LAST DAY <= FIRST DAY
+* COMPUTE TIME ON THE FIRST DAY
+         L     0,=A(100*24*60*60)  LOAD MIDNIGHT TIME OF DAY
+         S     0,0(,2)             SUBTRACT START TIME OF DAY
+* COMPUTE TIME ON INTERMEDIATE DAYS
+NEXTDAY  AHI   6,1                 ADD 1 TO START DAY OF YEAR
+         CR    6,8                 COMPARE WITH END DAY OF YEAR
+         JE    LASTDAY             BR IF LAST DAY
+         A     0,=A(100*24*60*60)  ADD TIME IN 1 FULL DAY
+         JO    EXIT4               BR IF OVERFLOW
+         J     NEXTDAY             AND DO IT AGAIN
+* COMPUTE TIME ON THE LAST DAY
+LASTDAY  A     0,0(,3)             ADD TIME IN THIS DAY
+         JO    EXIT4               BR IF MATH OVERFLOW
+         ST    0,0(,4)             STORE RESULT
+EXIT0    SR    15,15               SET RC = 0
+         J     EXIT
+EXIT4    LHI   15,4                SET RC = 4
+EXIT     SPM   5                   RESTORE THE CALLER'S PROGRAM MASK
+         RETURN (14,10),T,RC=(15)  RESTORE REGISTERS & RETURN
+         DC    0D'0'
+* USE TRTTAB1 TO VERIFY THE FIRST 3 BYTES AND TRTTAB2 TO VERIFY THE
+* 4TH BYTE OF PACKED DECIMAL DATA.
+**                  0 1 2 3 4 5 6 7 8 9 A B C D E F
+*TRTTAB1  DC    10X'00000000000000000000040404040404'
+*         DC     6X'04040404040404040404040404040404'
+*TRTTAB2  DC    10X'00000000000000000000000400040000'
+*         DC     6X'04040404040404040404040404040404'
+         LTORG ,                   DEFINE THE SMFETIME LITERALS
+         DC    0D'0'               ROUND CSECT TO 8 BYTES
+         END   ,

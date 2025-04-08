@@ -1,0 +1,20 @@
+* Copy this member to your SYS1.HELP data set or a convenient
+* data set in the SYSHELP concatenation.
+)F Function -
+  Use the LMATTR command the display a load module map
+)X Syntax -
+  LMATTR 'dslist'  MAP/NOMAP  VOL('volume serial')
+         BASE('module address in storage')
+  Required - dslist
+  Default - MAP
+)O Operands -
+))dslist - Specify one or more data set names of a partitioned data
+           set containing load modules.  Specify a member name to
+           obtain a module map for the member, LMATTR uses TEMPNAME
+           if no member name specified.
+))MAP - Display the module map.
+))NOMAP - Display module attributes without the nodule map.
+))VOL - Specify the volume serial where the data set specified in
+        dslist is located.
+))BASE - Specify the address in storage, in hexadecimal digits,
+         where the module is loaded.

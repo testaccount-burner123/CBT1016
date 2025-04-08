@@ -1,0 +1,320 @@
+LOGTIMED TITLE '                                   L I S T   L O G O N >
+                 T I M E'
+***********************************************************************
+*                                                                     *
+* Title -- LOGTIMED                                                   *
+*                                                                     *
+* Function / Operation -- LOGTIMED gathers and formats statistics     *
+*   for the current TSO session.                                      *
+*                                                                     *
+*  BCT188 HAS BEEN LOGGED ON 3 DAYS, 21 HOURS, 32 MINUTES, 5.33 SECONDS
+*  (93 HOURS, 32 MINUTES)                                             *
+*  BCT188 LOGGED ON AT 01:27 AM ON FEBRUARY 14, 2017                  *
+*  IT IS 10:59:13 PM ON FEBRUARY 17, 2017                             *
+*                                                                     *
+* Status / Change Level --                                            *
+*   V1L0 -- February 2007                                             *
+*                                                                     *
+* LOGTIMED is reenterable, refreshable and reusable.  It operates as  *
+*   a TSO command processor in task mode, enabled, ptoblen state and  *
+*   problem key.  It uses no APF restricted z/OS services, and does   *
+*   not attempt to evade an z/OS system integrity or data set access  *
+*   controls.                                                         *
+*                                                                     *
+***********************************************************************
+         SPACE 5
+LOGTIMED RSECT                     Define LOGTIMED CSECT
+LOGTIMED AMODE 31
+LOGTIMED RMODE ANY
+         USING WA,11               Establish work area addressability
+         USING *,12                Estavlish LOGTIMED addressability
+         SAVE  (14,12),,'LOGTIMED &SYSDATE &SYSTIME'  Save registers
+         LR    12,15               Prepare LOGTIMED base register
+         LM    6,9,0(1)            Load the CPPL
+         LA    5,WASIZE            Allocate the work area
+         GETMAIN R,LV=(5)
+         SR    15,15               Clear the work
+         LR    4,1                  area and prepare
+         LR    11,1                  the work area
+         MVCL  4,14                   base register
+         LA    15,SAVEAREA         Add the new save area
+         ST    13,4(,15)            to the save area chain
+         ST    15,8(,13)
+         LR    13,15
+         LOAD  EPLOC==CL8'SMFETIME'  Load SMFETIME
+         ST    0,SMFETIME
+         LOAD  EPLOC==CL8'CNVTBIN'   Load CNVTBIN
+         ST    0,CNVTBIN
+         LOAD  EPLOC==CL8'MINIFMT'   Load MINIFMT
+         ST    0,MINIFMT
+         L     10,CVTPTR           Copy the logon time from the JMR
+         L     5,CVTTCBP-CVTMAP(,10)
+         L     4,4(,5)
+         L     3,TCBTCT-TCB(,4)
+         L     3,TCTJMR-SMFTCT(,3)
+         MVC   ONTIME,JMRENTRY-JMR(3)
+         L     4,8+4(,5)           Copy the userid from the ACEE
+         L     4,ASCBASXB-ASCB(,4)
+         L     4,ASXBSENV-ASXB(,4)
+         SR    1,1
+         IC    1,ACEEUSRL-ACEE(,4)
+         LA    0,ACEEUSRI-ACEE(,4)
+         ICM   1,B'1000',=C' '
+         LA    14,USERID
+         LA    15,L'USERID
+         MVCL  14,0
+         TIME  BIN                 Get the current date & time
+         STM   0,1,NOW
+         L     15,SMFETIME                            Calculate the
+         CALL  (15),(ONTIME,NOW,ELAPSED),MF=(E,EPARM)  time logon time
+         L     0,ONTIME            Convert the LOGON time of
+         L     15,CNVTBIN           day to decimal
+         CALL  (15)
+         ST    0,ONTIME
+         L     0,NOW               Convert the current time of
+         L     15,CNVTBIN           day to decimal
+         CALL  (15)
+         ST    0,NOW
+* Prepare the TMED001I message
+*                              ----+----
+         MVC   FMTWORK+4(9),=C'TMED001I '
+         MVC   FMTWORK+4+9(L'USERID),USERID
+         LA    14,FMTWORK+4+9+L'USERID
+         BCTR  14,0
+         TM    0(14),255-C' '
+         BZ    *-6
+*                          ----+----1----+----2
+         MVC   1(20,14),=C' HAS BEEN LOGGED ON '
+         LA    14,21(,14)
+* Calculate the number of whole days in the session
+         SR    0,0
+         L     1,ELAPSED
+         D     0,=A(100*24*60*60)
+         ST    0,20(,13)           Save hours
+         LTR   1,1                 Test if 1 or more days
+         BZ    NODAYS
+         CVD   1,64(,13)
+         MVC   EDWORK,EDPATT
+         LA    1,EDWORK+3
+         EDMK  EDWORK,64+6(13)
+         LR    0,1
+         LA    1,EDWORK+L'EDWORK
+         SR    1,0
+         LR    15,1
+         MVCL  14,0                Copy whole days to message
+*                         ----+--
+         MVC   0(7,14),=C' DAYS, '
+         LA    14,7(,14)
+         L     0,20(,13)
+* Determine hours in last partial day
+NODAYS   LR    1,0
+         SR    0,0
+         D     0,=A(100*60*60)
+         ST    0,20(,13)
+         CVD   1,64(,13)
+         MVC   EDWORK,EDPATT
+         LA    1,EDWORK+3
+         EDMK  EDWORK,64+6(13)
+         LR    0,1
+         LA    1,EDWORK+L'EDWORK
+         SR    1,0
+         LR    15,1
+         MVCL  14,0                Add hours to message
+*                         ----+---
+         MVC   0(8,14),=C' HOURS, '
+         LA    14,8(,14)
+* Determine minutes in last partial hour
+         SR    0,0
+         L     1,20(,13)
+         D     0,=A(100*60)
+         ST    0,20(,13)
+         CVD   1,64(,13)
+         MVC   EDWORK,EDPATT
+         LA    1,EDWORK+3
+         EDMK  EDWORK,64+6(13)
+         LR    0,1
+         LA    1,EDWORK+L'EDWORK
+         SR    1,0
+         LR    15,1
+         MVCL  14,0                Add minutes to message
+*                          ----+----1
+         MVC   0(10,14),=C' MINUTES, '
+         LA    14,10(,14)
+         L     1,20(,13)
+* Add seconds on last minute to message
+         CVD   1,64(,13)
+         MVC   SECWORK,SECPATT
+         LA    1,SECWORK+3
+         EDMK  SECWORK,64+5(13)
+         LR    0,1
+         LA    1,SECWORK+L'SECWORK
+         SR    1,0
+         LR    15,1
+         MVCL  14,0
+*                         ----+---
+         MVC   0(8,14),=C' SECONDS'
+         LA    14,8(,14)
+         LA    1,FMTWORK           Compute the message length
+         SR    14,1
+         SLL   14,16               Translate message length to an RDW
+         STCM  14,B'1111',FMTWORK  Store the RDW
+         LA    0,1                 Prepare the PUTLINE OLD
+         STM   0,1,OLD+4
+         BAS   14,PUTLINE
+         SR    0,0
+         L     1,ELAPSED
+         D     0,=A(60*100)
+         SR    0,0
+         D     0,=A(60)
+         ST    0,MINUTES
+         ST    1,HOURS
+         LA    0,FMTWORK
+         LA    1,FMT03
+         L     15,MINIFMT
+         CALL  (15)
+         ST    1,OLD+8
+         BAS   14,PUTLINE
+* Prepare the TMED002I message
+         LA    0,FMTWORK
+         LA    1,FMT01
+         L     15,MINIFMT
+         CALL  (15)
+         ST    1,OLD+8
+         BAS   14,PUTLINE
+         LA    0,FMTWORK
+         LA    1,FMT02
+         L     15,MINIFMT
+         CALL  (15)
+         ST    1,OLD+8
+         BAS   14,PUTLINE
+EXIT     DC    0H'0'
+         DELETE EPLOC==CL8'SMFETIME'
+         DELETE EPLOC==CL8'CNVTBIN'
+         DELETE EPLOC==CL8'MINIFMT'
+         L     13,4(,13)           Load address of the Higher Save area
+         LA    0,WASIZE            Free the work area
+         FREEMAIN R,LV=(0),A=(11)
+         RETURN (14,12),RC=0       Restore registers & return
+         EJECT
+         CNOP  0,8
+PUTLINE  BALR  15,0
+         SAVE  (14,1),,PUTLINE
+         LA    15,72(,13)
+         ST    13,4(,15)
+         ST    15,8(,13)
+         LR    13,15
+* Use the PUTLINE macro to prepare the IOPL and the PUTLINE
+* Parameter Block
+         XC    PUTLPB,PUTLPB
+         PUTLINE OUTPUT=(OLD,,MULTLVL,INFOR),MF=(E,MYIOPL),ECB=ECB,   ->
+               PARM=PUTLPB,ECT=(RECT),UPT=(RUPT),ENTRY=CALLPUTL
+CALLPUTL L     15,CVTPTR           Now actually call PUTLINE
+         L     15,CVTPUTL-CVTMAP(,15)
+         CALL  (15)
+         L     13,4(,13)
+         RETURN (14,1)
+         EJECT
+         CNOP  0,8
+PUTLINED BASR  15,0
+         SAVE  (14,2),,PUTLINED
+         LA    15,72(,13)
+         ST    13,72+4(,13)
+         ST    15,8(,13)
+         LR    13,15
+         LR    2,1
+         XC    PUTLPB,PUTLPB
+         PUTLINE OUTPUT=((2),TERM,SINGLE,DATA),MF=(E,MYIOPL),ECB=ECB, ->
+               PARM=PUTLPB,ECT=(RECT),UPT=(RUPT),ENTRY=CALLPUTLD
+CALLPUTLD L    15,CVTPTR
+         L     15,CVTPUTL-CVTMAP(,15)
+         CALL  (15)
+         L     13,4(,13)
+         RETURN (14,2)
+         DC    0D'0'
+         LTORG
+*                 ----             Master EDMK patterns
+*                 0---
+*                  6 7
+EDPATT   DC    0C' NNN',C' ',X'202120'
+*                 ----+--
+*                 0----+-
+*                  5 6  7
+SECPATT  DC    0C' NNN.NN',C' ',X'202120',C'.',X'2020'
+         SPACE 1
+FMT01    DC    AL1(L'FMT01A)
+FMT01A   DC    C'TMED002I '
+         DC    AL1(X'C0'+0,L'USERID,0),SL2(USERID)
+         DC    AL1(L'FMT01B)
+FMT01B   DC    C' LOGGED ON AT '
+         DC    AL1(X'C0'+5,0,4),SL2(ONTIME)
+         DC    AL1(4),C' ON '
+         DC    AL1(X'C0'+5,7,0),SL2(ONTIME),X'FF'
+         SPACE 1
+FMT02    DC    AL1(L'FMT02A)
+FMT02A   DC    C'TMED03I IT IS '
+         DC    AL1(X'C0'+5,0,4),SL2(NOW)
+         DC    AL1(4),C' ON '
+         DC    AL1(X'C0'+5,7,0),SL2(NOW),X'FF'
+         SPACE 1
+FMT03    DC    AL1(L'FMT03A)
+FMT03A   DC    C'TMED04I ('
+         DC    AL1(X'C0'+1,L'HOURS,0),SL2(HOURS)
+         DC    AL1(L'FMT03B)
+FMT03B   DC    C' HOURS, '
+         DC    AL1(X'C0'+1,L'MINUTES,0),SL2(MINUTES)
+         DC    AL1(L'FMT03C)
+FMT03C   DC    C' MINUTES)',X'FF'
+         DC    0D'0'
+         PUSH  PRINT
+         PRINT NOGEN
+         IKJCPPL ,                 TSO CPPL
+RCBUF    EQU   6+(CPPLCBUF-CPPL)/4 Register containing CPPLCBUF
+RPSCB    EQU   6+(CPPLPSCB-CPPL)/4 Register containing CPPLPSCB
+RECT     EQU   6+(CPPLECT-CPPL)/4  Register containing CPPLECT
+RUPT     EQU   6+(CPPLUPT-CPPL)/4  Register containing CPPLUPT
+         SPACE 2
+         IKJIOPL ,                 TSO IOPL
+IOPLSIZE EQU   *-IOPL
+         SPACE 2
+WA       DSECT                     Work area
+SAVEAREA DS    (2*9)D              2 72 byte register save areas
+FMTWORK  DS    XL200               Message build area
+MYIOPL   DS    XL(IOPLSIZE)        IOPL sent to PUTLINE
+OLD      DS    3A                  PUTLINE Output Line Descriptor
+ONTIME   DS    XL8                 TSO session start date & time
+NOW      DS    XL8                 Current date & time
+ELAPSED  DS    F                   Elapsed time
+HOURS    DS    F
+MINUTES  DS    F
+EPARM    CALL  ,(*-*,*-*,*-*),MF=L SMFETIME parameter list
+USERID   DS    CL8                 Userid from RACF ACEE
+PUTLPBS  PUTLINE MF=L              PUTLINE parameter data
+PUTLPB   EQU   PUTLPBS,*-PUTLPBS
+SMFETIME DS    A                   Address of SMFETIME
+MINIFMT  DS    A
+CNVTBIN  DS    A
+ECB      DS    F                   ECG for PUTLINE
+EDWORK   DS    0CL(L'EDPATT)       EDMK wotk area
+SECWORK  DS    CL(L'SECPATT),0D    EDMK work area
+WASIZE   EQU   *-WA                Work area size
+         SPACE 2
+         CVT   DSECT=YES           z/OS CVT
+         SPACE 2
+         IKJTCB                    z/OS TCB
+         SPACE 2
+TIOT     DSECT                     z/OS Task I/O Table
+         IEFTIOT1
+         SPACE 2
+         IEZJSCB                   z/OS JSCB
+         SPACE 2
+         IEFTCT ,                  z/OS Timing Control Table
+         SPACE 2
+         IEFJMR ,                  z/OS Job Management Record
+         SPACE 2
+         IHAASCB ,                 z/OS ASCB
+         SPACE 2
+         IHAASXB ,                 z/OS ASCB extension
+         SPACE 2
+         IHAACEE ,                 z/OS RACF ACEE
+         POP   PRINT
+         END   LOGTIMED

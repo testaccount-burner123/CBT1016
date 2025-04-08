@@ -1,0 +1,19 @@
+* Copy this member and the RPDS alias to your SYS1.HELP data set
+)F Function -
+  Use the RESETPDS command to reset a PDS or PDSE data set so it
+  has no members and the next member added to the data set will
+  immediately follow the directory.
+)X Syntax -
+  RESETPDS/RPDS  'dslist'  SHARE/SHR  VERSION
+
+  Required - 'dslist'
+  Defaults - None
+)O Operands -
+))SHARE - Allocate the data sets specified in dslist with the
+          SHR allocation attribute.  The data sets are allocated
+          with the OLD data set attribute if SHARE is not specified.
+))SHR   - Allocate the data sets specified in dslist with the
+          SHR allocation attribute.  The data sets are allocated
+          with the OLD data set attribute if SHR is not specified.
+))VERSION - Issue the RPDS005I message with version information
+            about the command.

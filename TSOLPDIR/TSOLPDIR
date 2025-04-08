@@ -1,0 +1,24 @@
+* Help information for the TSOLPDIR (alias LISTPDS) command.  Copy
+* this member (and its alias) to your SYS1.HELP data set
+)F Function -
+  Use the TSOLPDIR command to list the contents of the directories
+  of one or more partitioned data sets.
+)X Syntax -
+  TSOLPDIR  'dslist'  FORMAT/DUMP  HEADER/HDR/NOHEADER/NOHDR
+  LISTPDS             MASK('selection criteria')  VERSION
+
+  Default - FORMAT HEADER
+  Required - dslist
+)O Operands -
+  'dslist' - Specify the names of one or more data sets
+))FORMAT - List load module / program object directory entries or
+           directory entries containing ISPF direcrory statistics,
+))DUMP - List user data as hexadecimal characters much like IEHLIST.
+))HEADER - List a header appropriate for the first directory
+           entry listed by TSOLPDIR
+))NOHEADER - Do not list an explanatory header.
+))MASK('selection criteria') - Selection criteria to limit the
+           number of members listed by TSOLPDIR.  Specify * at the
+           end of the mask to select any members that match the
+           other characters in the mask; specify % to match any
+           character.
